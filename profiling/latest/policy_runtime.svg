@@ -5,13 +5,13 @@
 <line x1="90" y1="60" x2="90" y2="420" stroke="#111827" stroke-width="2"/>
 <text x="450.0" y="494" text-anchor="middle" font-size="16" font-family="Menlo, monospace">Policy</text>
 <text x="26" y="260.0" transform="rotate(-90 26 260.0)" text-anchor="middle" font-size="16" font-family="Menlo, monospace">Real Seconds</text>
-<rect x="141.33333333333334" y="355.90176515732924" width="154.0" height="64.09823484267076" fill="#0f766e" opacity="0.9"/>
-<text x="218.33333333333334" y="347.90176515732924" text-anchor="middle" font-size="13" font-family="Menlo, monospace">2.32</text>
+<rect x="141.33333333333334" y="362.6373626373626" width="154.0" height="57.36263736263735" fill="#0f766e" opacity="0.9"/>
+<text x="218.33333333333334" y="354.6373626373626" text-anchor="middle" font-size="13" font-family="Menlo, monospace">0.58</text>
 <text x="218.33333333333334" y="442" text-anchor="middle" font-size="13" font-family="Menlo, monospace">default</text>
-<rect x="398.0" y="355.0729086722947" width="154.0" height="64.9270913277053" fill="#b45309" opacity="0.9"/>
-<text x="475.0" y="347.0729086722947" text-anchor="middle" font-size="13" font-family="Menlo, monospace">2.35</text>
+<rect x="398.0" y="360.65934065934067" width="154.0" height="59.34065934065933" fill="#b45309" opacity="0.9"/>
+<text x="475.0" y="352.65934065934067" text-anchor="middle" font-size="13" font-family="Menlo, monospace">0.6</text>
 <text x="475.0" y="442" text-anchor="middle" font-size="13" font-family="Menlo, monospace">utility</text>
 <rect x="654.6666666666667" y="60.0" width="154.0" height="360.0" fill="#1d4ed8" opacity="0.9"/>
-<text x="731.6666666666667" y="52.0" text-anchor="middle" font-size="13" font-family="Menlo, monospace">13</text>
+<text x="731.6666666666667" y="52.0" text-anchor="middle" font-size="13" font-family="Menlo, monospace">3.64</text>
 <text x="731.6666666666667" y="442" text-anchor="middle" font-size="13" font-family="Menlo, monospace">background</text>
 </svg>

@@ -4,6 +4,7 @@
 #include "core/field_layout.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 
 namespace solver {
@@ -55,12 +56,42 @@ class StructuredField {
     fill_range(layout_.ghost_range(face, layer), value);
   }
 
-  [[nodiscard]] double& operator()(const int i, const int j, const int k) {
+  [[nodiscard]] double& at(const int i, const int j, const int k) {
     return data_[layout_.index(i, j, k)];
   }
 
-  [[nodiscard]] const double& operator()(const int i, const int j, const int k) const {
+  [[nodiscard]] const double& at(const int i, const int j, const int k) const {
     return data_[layout_.index(i, j, k)];
+  }
+
+  [[nodiscard]] double& unchecked(const int i, const int j, const int k) noexcept {
+    return data_[layout_.unchecked_index(i, j, k)];
+  }
+
+  [[nodiscard]] const double& unchecked(const int i, const int j, const int k) const noexcept {
+    return data_[layout_.unchecked_index(i, j, k)];
+  }
+
+  [[nodiscard]] double* row_ptr(const int j, const int k) noexcept {
+    return data() + layout_.unchecked_index(0, j, k);
+  }
+
+  [[nodiscard]] const double* row_ptr(const int j, const int k) const noexcept {
+    return data() + layout_.unchecked_index(0, j, k);
+  }
+
+  [[nodiscard]] double& operator()(const int i, const int j, const int k) {
+#if !defined(NDEBUG)
+    assert(layout_.is_storage_index(i, j, k));
+#endif
+    return data_[layout_.unchecked_index(i, j, k)];
+  }
+
+  [[nodiscard]] const double& operator()(const int i, const int j, const int k) const {
+#if !defined(NDEBUG)
+    assert(layout_.is_storage_index(i, j, k));
+#endif
+    return data_[layout_.unchecked_index(i, j, k)];
   }
 
  protected:
@@ -112,4 +143,3 @@ struct VelocityField {
 };
 
 }  // namespace solver
-

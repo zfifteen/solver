@@ -6,11 +6,11 @@ That combination matters here. A lot of scientific software grows by accumulatin
 
 Right now, the repository is still early, but it has moved well past the "just scaffolding" stage. It now contains multiple full simulation and verification paths rather than only isolated numerical building blocks. The codebase has the locked-down build environment, the structured-grid and field-storage layer, the discrete operators, the transport-term kernels, the projection machinery, the matrix-free MGPCG pressure solver, the cavity benchmark path, the generalized boundary-condition system exercised by analytic Couette and Poiseuille verification cases, the restart/output path for the first full driver, the automated broader verification suite with convergence reports, and now a first real profiling layer with microbenchmarks, end-to-end throughput reports, and Instruments-backed hotspot summaries. In other words, this repo is already opinionated about how the solver should be built, validated, measured, and evolved before the deeper optimization and scaling passes arrive.
 
-If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 10 of that plan.
+If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 12 of that plan.
 
 ## Current Status
 
-The repository is currently at **Milestone 10: Performance Profiling**.
+The repository is currently at **Milestone 12: 3D Extension**.
 
 Implemented today:
 
@@ -45,6 +45,7 @@ Implemented today:
 - checkpoint-based cavity restart loader with bitwise deterministic continuation coverage
 - legacy VTK export for cell-centered pressure and reconstructed velocity
 - Taylor-Green vortex verification driver with analytic kinetic-energy decay validation
+- dimension-aware Taylor-Green support covering both 2D and 3D periodic cases
 - manufactured-solution operator-verification tool for reusable spatial convergence studies
 - automated validation harness that writes convergence tables, benchmark summaries, mass-conservation summaries, and SVG plots under `validation/latest/`
 - generated Milestone 9 evidence artifacts for operator spatial convergence, Taylor-Green temporal self-convergence, and deterministic benchmark thresholds
@@ -52,6 +53,9 @@ Implemented today:
 - automated profiling harness that writes kernel, throughput, policy-study, thread-scaling, and hotspot reports under `profiling/latest/`
 - Instruments-backed hotspot summaries plus sampled P-core / E-core share reporting on Apple Silicon
 - measured default scheduler-policy recommendation for the current M1 Max benchmark path
+- optimized unchecked storage-access path for the hottest structured-field kernels
+- measured Milestone 10 to Milestone 11 before/after benchmark comparison under `profiling/latest/`
+- 3D Taylor-Green smoke and validation configs plus a short `256^3` execution-path smoke config
 - a smoke-test executable that reports build/runtime metadata
 - a minimal test executable wired into CTest
 - a simple time-based profiling helper script
@@ -59,19 +63,21 @@ Implemented today:
 
 What is not implemented yet:
 
-- 3D simulation support
-- solver optimization and true multithreaded scaling work beyond the current profiling baseline
-- broader 3D and higher-Reynolds-number verification beyond the current 2D reference suite
+- broader 3D full-case coverage beyond the Taylor-Green path
+- deeper solver optimization and true multithreaded scaling beyond the current first M11 pass
+- broader 3D and higher-Reynolds-number verification beyond the current reference suite
 
 Current implementation note:
 
-- the advection kernel and the current cavity driver are still intentionally 2D-only
+- the current cavity and channel drivers are still intentionally 2D-only even though the Taylor-Green path is now 3D-capable
 - the current full-case drivers remain intentionally specialized even though they now share the generalized boundary-condition system underneath
 - the cavity benchmark validates against a steady-cavity literature envelope rather than treating the coarse Ghia point table as the sole source of truth
 - the current restart/output path is implemented for the cavity driver first, which is the milestone-appropriate full simulation path
 - the current broader verification suite is deterministic-profile-first and intentionally centered on the milestone reference cases rather than a large benchmark catalog
 - the current profiling recommendation is based on measured Apple M1 Max runs and currently favors the `benchmark` build with the default unclamped scheduler policy
-- the current solver path is still effectively single-threaded, so Milestone 10 establishes a profiling baseline rather than claiming scaling wins yet
+- the current M11 pass improves kernel and end-to-end throughput substantially without changing the numerical method
+- the current solver path is still effectively single-threaded, so this milestone closes CPU optimization before deeper thread-scaling work
+- the current Milestone 12 gate is a 3D Taylor-Green validation case plus a short `256^3` execution-path proof, not a claim that every driver is fully 3D today
 
 ## Project Goals
 
@@ -121,7 +127,7 @@ The full solver architecture is described in [TECH-SPEC.md](TECH-SPEC.md), but t
 - pressure solve: MGPCG with fixed V-cycle multigrid and damped-Jacobi smoothing
 - precision policy: `double` for solution state and pressure-solver reductions
 - validation default: advective CFL `<= 0.5` unless a benchmark case says otherwise
-- current full-case benchmarks: lid-driven cavity at `Re = 100`, analytic Couette and Poiseuille profile preservation cases, and Taylor-Green vortex decay
+- current full-case benchmarks: lid-driven cavity at `Re = 100`, analytic Couette and Poiseuille profile preservation cases, and both 2D and 3D Taylor-Green vortex decay
 
 Parts of that numerical path are now implemented at the operator, transport, projection, linear-solver, boundary-condition, and restart/output layers, and the rest remains the governing design contract for the upcoming milestones.
 
@@ -154,7 +160,7 @@ What those directories mean in practice right now:
 - `bc/`: the shared boundary-condition abstraction used by the solver layer
 - `io/`: checkpoint serialization, restart loading, and VTK export
 - `validation/`: the automated Milestone 9 harness plus the latest generated reports and plots
-- `profiling/`: the automated Milestone 10 harness plus the latest generated profiling reports and plots
+- `profiling/`: the automated Milestone 11 harness, stored M10 baseline data, and the latest generated profiling reports and plots
 
 The technical and roadmap documents live at the repository root and currently act as the primary design references.
 
@@ -237,19 +243,31 @@ build/deterministic/tools/solver_channel benchmarks/channel_couette_128.cfg
 build/deterministic/tools/solver_channel benchmarks/channel_poiseuille_128.cfg
 ```
 
-Run the deterministic Milestone 9 Taylor-Green benchmark gate:
+Run the deterministic 2D Taylor-Green benchmark gate:
 
 ```bash
 build/deterministic/tools/solver_taylor_green benchmarks/taylor_green_128.cfg
 ```
 
-Generate the full Milestone 9 validation report set:
+Run the deterministic Milestone 12 3D Taylor-Green benchmark gate:
+
+```bash
+build/deterministic/tools/solver_taylor_green benchmarks/taylor_green_3d_64.cfg
+```
+
+Run the short `256^3` execution-path smoke:
+
+```bash
+build/deterministic/tools/solver_taylor_green benchmarks/taylor_green_3d_256_smoke.cfg
+```
+
+Generate the full deterministic validation report set:
 
 ```bash
 ./validation/run_validation_suite.py --build-dir build/deterministic --output-dir validation/latest
 ```
 
-Generate the full Milestone 10 profiling report set:
+Generate the full Milestone 11 profiling and comparison report set:
 
 ```bash
 ./profiling/run_profile_suite.py --build-dir build/benchmark --output-dir profiling/latest
@@ -267,7 +285,7 @@ Restart from that checkpoint for more steps:
 build/deterministic/tools/solver_cavity benchmarks/lid_driven_cavity_smoke.cfg --restart /tmp/solver.chk --steps 6
 ```
 
-Today’s automated coverage now spans the full Milestone 9 gate. The current test executable checks that:
+Today’s automated coverage still spans the full deterministic validation gate. The current test executable checks that:
 
 - the build profile is one of the locked profile names
 - the runtime platform is Apple Silicon
@@ -296,7 +314,7 @@ Today’s automated coverage now spans the full Milestone 9 gate. The current te
 - the MGPCG solve preserves zero-mean pressure for a pure-Neumann problem
 - the MGPCG residual converges to the required relative tolerance and reports the fixed policy metadata
 - the Couette and Poiseuille verification paths load configs, apply the intended BC sets, and pass their analytic profile gates
-- the Taylor-Green verification path loads configs, applies the periodic/symmetry BC set, and passes its smoke decay gate
+- the Taylor-Green verification path loads both 2D and 3D configs, applies the intended periodic/symmetry BC sets, and passes its decay gates
 - checkpoint round-trips preserve the cavity continuation state bitwise
 - corrupted checkpoints fail checksum verification before restart
 - split cavity runs reproduce uninterrupted deterministic runs bitwise after restart
@@ -308,16 +326,17 @@ The broader verification harness that closes Milestone 9 lives outside `solver_t
 
 - operator spatial-convergence tables and SVG plots
 - Taylor-Green temporal self-convergence tables and SVG plots
-- deterministic benchmark-threshold summaries for Couette, Poiseuille, lid-driven cavity, and Taylor-Green
+- deterministic benchmark-threshold summaries for Couette, Poiseuille, lid-driven cavity, and both 2D and 3D Taylor-Green cases
 - mass-conservation summaries across the reference cases
 
-Milestone 10 profiling also lives outside `solver_tests`, in `profiling/run_profile_suite.py`. Its generated outputs in `profiling/latest/` currently include:
+Milestone 11 profiling and optimization evidence also lives outside `solver_tests`, in `profiling/run_profile_suite.py`. Its generated outputs in `profiling/latest/` currently include:
 
 - hardware and platform summaries for the active Apple Silicon machine
 - advection and pressure-solver kernel microbenchmark tables and throughput plots
 - end-to-end throughput summaries for the current deterministic reference cases
 - QoS / scheduler-policy studies with sampled P-core and E-core shares
 - Time Profiler hotspot summaries grouped by solver subsystem
+- explicit comparison tables against the stored Milestone 10 M1 Max baseline
 - a baseline thread-scaling report that makes the current single-threaded state explicit
 
 ## Profiling
@@ -330,13 +349,13 @@ tools/profile_example.sh build/deterministic
 
 That helper still gives a quick `/usr/bin/time -lp` baseline for the smoke executable.
 
-For the real Milestone 10 profiling pass, use:
+For the real Milestone 11 profiling and comparison pass, use:
 
 ```bash
 ./profiling/run_profile_suite.py --build-dir build/benchmark --output-dir profiling/latest
 ```
 
-That harness runs kernel microbenchmarks, end-to-end benchmark timing, QoS policy studies, and Instruments Time Profiler captures. On the current Apple M1 Max reference machine, the measured recommendation is to use the `benchmark` profile with the default unclamped scheduler policy for performance experiments. The current compute-thread recommendation remains `1`, because the solver path is still establishing its single-threaded baseline before the Milestone 11 optimization and scaling work.
+That harness runs kernel microbenchmarks, end-to-end benchmark timing, QoS policy studies, Instruments Time Profiler captures, and a direct comparison against the stored Milestone 10 M1 Max baseline. On the current Apple M1 Max reference machine, the measured recommendation is still to use the `benchmark` profile with the default unclamped scheduler policy for performance experiments. The current compute-thread recommendation remains `1`, because this first M11 pass focused on hot-kernel efficiency before deeper thread-scaling work.
 
 ## Roadmap
 
@@ -353,9 +372,11 @@ The implementation plan is spelled out in [EXECUTION_ROADMAP_V1.md](EXECUTION_RO
 9. Milestone 8: restart/output for the current full simulation path
 10. Milestone 9: broader verification with convergence studies and benchmark reporting
 11. Milestone 10: performance profiling and baseline hotspot analysis
-12. Milestone 11 and beyond: optimization, scaling, 3D support, and conditional Metal acceleration
+12. Milestone 11: CPU optimization with before/after benchmark comparison
+13. Milestone 12: 3D Taylor-Green validation plus a short `256^3` execution-path proof
+14. Milestone 13 and beyond: conditional Metal evaluation, further scaling work, and production hardening
 
-The repository has completed Milestone 10 and is set up to move into Milestone 11: optimization and scaling.
+The repository has completed Milestone 12 and is set up for the conditional Milestone 13 decision: keep pushing the CPU path, or add Metal only if new profiling evidence says the CPU route has topped out.
 
 The important project rule is simple: **do not advance to the next milestone unless the current validation gate passes**.
 

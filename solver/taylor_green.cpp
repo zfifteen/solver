@@ -42,8 +42,8 @@ bool parse_bool(const std::string& value) {
 }
 
 void validate_config(const TaylorGreenConfig& config) {
-  if(config.nx <= 0 || config.ny <= 0) {
-    throw std::invalid_argument("Taylor-Green config expects positive nx and ny");
+  if(config.nx <= 0 || config.ny <= 0 || config.nz <= 0) {
+    throw std::invalid_argument("Taylor-Green config expects positive nx, ny, and nz");
   }
   if(config.viscosity <= 0.0) {
     throw std::invalid_argument("Taylor-Green config expects viscosity > 0");
@@ -57,6 +57,14 @@ void validate_config(const TaylorGreenConfig& config) {
   if(config.poisson_max_iterations <= 0 || config.poisson_tolerance <= 0.0) {
     throw std::invalid_argument("Taylor-Green config expects positive Poisson controls");
   }
+}
+
+double domain_length() {
+  return 2.0 * pi();
+}
+
+bool is_3d_case(const TaylorGreenConfig& config) {
+  return config.nz > 1;
 }
 
 void axpy_active(StructuredField& destination, const StructuredField& source, const double scale) {
@@ -97,31 +105,103 @@ double max_velocity_change(const VelocityField& left, const VelocityField& right
   return change;
 }
 
-double mixed_second_derivative_2d(const StructuredField& input, const int i, const int j, const int k) {
-  const double dy = input.layout().grid().dy;
-  const double dy_squared = dy * dy;
-  const double dyy_im1 =
-      (input(i - 1, j + 1, k) - 2.0 * input(i - 1, j, k) + input(i - 1, j - 1, k)) / dy_squared;
-  const double dyy_i =
-      (input(i, j + 1, k) - 2.0 * input(i, j, k) + input(i, j - 1, k)) / dy_squared;
-  const double dyy_ip1 =
-      (input(i + 1, j + 1, k) - 2.0 * input(i + 1, j, k) + input(i + 1, j - 1, k)) / dy_squared;
-
-  const double dx = input.layout().grid().dx;
-  const double inverse_dx_squared = 1.0 / (dx * dx);
-  return (dyy_ip1 - 2.0 * dyy_i + dyy_im1) * inverse_dx_squared;
+int axis_di(const Axis axis, const int offset) {
+  return axis == Axis::x ? offset : 0;
 }
 
-void compute_factorized_correction_2d(const VelocityField& current_velocity,
-                                      VelocityField& factorized_correction) {
-  factorized_correction.fill(0.0);
+int axis_dj(const Axis axis, const int offset) {
+  return axis == Axis::y ? offset : 0;
+}
 
-  const auto fill_component = [](const StructuredField& input, StructuredField& output) {
+int axis_dk(const Axis axis, const int offset) {
+  return axis == Axis::z ? offset : 0;
+}
+
+double second_derivative_axis(const StructuredField& input,
+                              const int i,
+                              const int j,
+                              const int k,
+                              const Axis axis) {
+  const double spacing = input.layout().grid().spacing(axis);
+  const double inverse_spacing_squared = 1.0 / (spacing * spacing);
+  return (input(i + axis_di(axis, 1), j + axis_dj(axis, 1), k + axis_dk(axis, 1)) -
+          2.0 * input(i, j, k) +
+          input(i + axis_di(axis, -1), j + axis_dj(axis, -1), k + axis_dk(axis, -1))) *
+         inverse_spacing_squared;
+}
+
+double mixed_second_derivative(const StructuredField& input,
+                               const int i,
+                               const int j,
+                               const int k,
+                               const Axis outer_axis,
+                               const Axis inner_axis) {
+  const double spacing = input.layout().grid().spacing(outer_axis);
+  const double inverse_spacing_squared = 1.0 / (spacing * spacing);
+  return (second_derivative_axis(
+              input,
+              i + axis_di(outer_axis, 1),
+              j + axis_dj(outer_axis, 1),
+              k + axis_dk(outer_axis, 1),
+              inner_axis) -
+          2.0 * second_derivative_axis(input, i, j, k, inner_axis) +
+          second_derivative_axis(
+              input,
+              i + axis_di(outer_axis, -1),
+              j + axis_dj(outer_axis, -1),
+              k + axis_dk(outer_axis, -1),
+              inner_axis)) *
+         inverse_spacing_squared;
+}
+
+double triple_second_derivative(const StructuredField& input,
+                                const int i,
+                                const int j,
+                                const int k,
+                                const Axis axis_a,
+                                const Axis axis_b,
+                                const Axis axis_c) {
+  const double spacing = input.layout().grid().spacing(axis_a);
+  const double inverse_spacing_squared = 1.0 / (spacing * spacing);
+  return (mixed_second_derivative(
+              input,
+              i + axis_di(axis_a, 1),
+              j + axis_dj(axis_a, 1),
+              k + axis_dk(axis_a, 1),
+              axis_b,
+              axis_c) -
+          2.0 * mixed_second_derivative(input, i, j, k, axis_b, axis_c) +
+          mixed_second_derivative(
+              input,
+              i + axis_di(axis_a, -1),
+              j + axis_dj(axis_a, -1),
+              k + axis_dk(axis_a, -1),
+              axis_b,
+              axis_c)) *
+         inverse_spacing_squared;
+}
+
+void compute_factorized_correction(const VelocityField& current_velocity,
+                                   const double alpha,
+                                   VelocityField& factorized_correction) {
+  factorized_correction.fill(0.0);
+  const bool three_dimensional = !current_velocity.x.layout().grid().is_2d();
+
+  const auto fill_component = [alpha, three_dimensional](const StructuredField& input,
+                                                         StructuredField& output) {
     const IndexRange3D active = input.layout().active_range();
     for(int k = active.k_begin; k < active.k_end; ++k) {
       for(int j = active.j_begin; j < active.j_end; ++j) {
         for(int i = active.i_begin; i < active.i_end; ++i) {
-          output(i, j, k) = mixed_second_derivative_2d(input, i, j, k);
+          double correction =
+              mixed_second_derivative(input, i, j, k, Axis::x, Axis::y);
+          if(three_dimensional) {
+            correction += mixed_second_derivative(input, i, j, k, Axis::x, Axis::z);
+            correction += mixed_second_derivative(input, i, j, k, Axis::y, Axis::z);
+            correction -= alpha *
+                          triple_second_derivative(input, i, j, k, Axis::x, Axis::y, Axis::z);
+          }
+          output(i, j, k) = correction;
         }
       }
     }
@@ -146,7 +226,8 @@ void assemble_predictor_rhs(const VelocityField& current_velocity,
   compute_advection_term(current_velocity, advection_options, advection_current);
   compute_diffusion_term(current_velocity, viscosity, diffusion);
   operators::compute_gradient(pressure_total, pressure_gradient);
-  compute_factorized_correction_2d(current_velocity, factorized_correction);
+  const double alpha = 0.5 * viscosity * dt;
+  compute_factorized_correction(current_velocity, alpha, factorized_correction);
 
   predictor_rhs = current_velocity;
   axpy_velocity(predictor_rhs, pressure_gradient, -dt);
@@ -159,16 +240,18 @@ void assemble_predictor_rhs(const VelocityField& current_velocity,
     axpy_velocity(predictor_rhs, advection_current, -dt);
   }
 
-  const double alpha = 0.5 * viscosity * dt;
   axpy_velocity(predictor_rhs, factorized_correction, alpha * alpha);
 }
 
 double exact_decay(const TaylorGreenConfig& config, const double time) {
-  return std::exp(-2.0 * config.viscosity * time);
+  const double rate = is_3d_case(config) ? 3.0 : 2.0;
+  return std::exp(-rate * config.viscosity * time);
 }
 
 double exact_kinetic_energy(const TaylorGreenConfig& config, const double time) {
-  return 0.25 * std::exp(-4.0 * config.viscosity * time);
+  const double initial_energy = is_3d_case(config) ? 0.125 : 0.25;
+  const double rate = is_3d_case(config) ? 6.0 : 4.0;
+  return initial_energy * std::exp(-rate * config.viscosity * time);
 }
 
 double kinetic_energy(const VelocityField& velocity) {
@@ -215,12 +298,21 @@ double velocity_relative_l2_error(const VelocityField& velocity,
     }
   };
 
-  accumulate(velocity.x, [](const double x, const double y, double, const double decay_value) {
-    return -std::cos(x) * std::sin(y) * decay_value;
-  });
-  accumulate(velocity.y, [](const double x, const double y, double, const double decay_value) {
-    return std::sin(x) * std::cos(y) * decay_value;
-  });
+  if(is_3d_case(config)) {
+    accumulate(velocity.x, [](const double x, const double y, const double z, const double decay_value) {
+      return -std::cos(x) * std::sin(y) * std::cos(z) * decay_value;
+    });
+    accumulate(velocity.y, [](const double x, const double y, const double z, const double decay_value) {
+      return std::sin(x) * std::cos(y) * std::cos(z) * decay_value;
+    });
+  } else {
+    accumulate(velocity.x, [](const double x, const double y, double, const double decay_value) {
+      return -std::cos(x) * std::sin(y) * decay_value;
+    });
+    accumulate(velocity.y, [](const double x, const double y, double, const double decay_value) {
+      return std::sin(x) * std::cos(y) * decay_value;
+    });
+  }
   accumulate(velocity.z, [](double, double, double, double) {
     return 0.0;
   });
@@ -237,22 +329,26 @@ void initialize_exact_state(const TaylorGreenConfig& config,
 
   const IndexRange3D u_active = velocity.x.layout().active_range();
   for(int k = u_active.k_begin; k < u_active.k_end; ++k) {
+    const double z = velocity.x.layout().coordinate_for_storage_index(Axis::z, k);
     for(int j = u_active.j_begin; j < u_active.j_end; ++j) {
       const double y = velocity.x.layout().coordinate_for_storage_index(Axis::y, j);
       for(int i = u_active.i_begin; i < u_active.i_end; ++i) {
         const double x = velocity.x.layout().coordinate_for_storage_index(Axis::x, i);
-        velocity.x(i, j, k) = -std::cos(x) * std::sin(y) * decay;
+        const double z_factor = is_3d_case(config) ? std::cos(z) : 1.0;
+        velocity.x(i, j, k) = -std::cos(x) * std::sin(y) * z_factor * decay;
       }
     }
   }
 
   const IndexRange3D v_active = velocity.y.layout().active_range();
   for(int k = v_active.k_begin; k < v_active.k_end; ++k) {
+    const double z = velocity.y.layout().coordinate_for_storage_index(Axis::z, k);
     for(int j = v_active.j_begin; j < v_active.j_end; ++j) {
       const double y = velocity.y.layout().coordinate_for_storage_index(Axis::y, j);
       for(int i = v_active.i_begin; i < v_active.i_end; ++i) {
         const double x = velocity.y.layout().coordinate_for_storage_index(Axis::x, i);
-        velocity.y(i, j, k) = std::sin(x) * std::cos(y) * decay;
+        const double z_factor = is_3d_case(config) ? std::cos(z) : 1.0;
+        velocity.y(i, j, k) = std::sin(x) * std::cos(y) * z_factor * decay;
       }
     }
   }
@@ -260,13 +356,22 @@ void initialize_exact_state(const TaylorGreenConfig& config,
   velocity.z.fill(0.0);
 
   const IndexRange3D p_active = pressure_total.layout().active_range();
-  const double pressure_decay = std::exp(-4.0 * config.viscosity * time);
+  const double pressure_decay =
+      std::exp((is_3d_case(config) ? -6.0 : -4.0) * config.viscosity * time);
   for(int k = p_active.k_begin; k < p_active.k_end; ++k) {
+    const double z = pressure_total.layout().coordinate_for_storage_index(Axis::z, k);
     for(int j = p_active.j_begin; j < p_active.j_end; ++j) {
       const double y = pressure_total.layout().coordinate_for_storage_index(Axis::y, j);
       for(int i = p_active.i_begin; i < p_active.i_end; ++i) {
         const double x = pressure_total.layout().coordinate_for_storage_index(Axis::x, i);
-        pressure_total(i, j, k) = -0.25 * (std::cos(2.0 * x) + std::cos(2.0 * y)) * pressure_decay;
+        if(is_3d_case(config)) {
+          pressure_total(i, j, k) =
+              -0.0625 * (std::cos(2.0 * x) + std::cos(2.0 * y)) *
+              (std::cos(2.0 * z) + 2.0) * pressure_decay;
+        } else {
+          pressure_total(i, j, k) =
+              -0.25 * (std::cos(2.0 * x) + std::cos(2.0 * y)) * pressure_decay;
+        }
       }
     }
   }
@@ -278,7 +383,9 @@ void initialize_exact_state(const TaylorGreenConfig& config,
 }
 
 double stable_dt_upper_bound(const Grid& grid, const TaylorGreenConfig& config) {
-  return config.cfl_limit / (1.0 / grid.dx + 1.0 / grid.dy);
+  const double inverse_sum = 1.0 / grid.dx + 1.0 / grid.dy +
+                             (grid.is_2d() ? 0.0 : 1.0 / grid.dz);
+  return config.cfl_limit / inverse_sum;
 }
 
 TaylorGreenValidation build_validation(const TaylorGreenConfig& config,
@@ -288,7 +395,8 @@ TaylorGreenValidation build_validation(const TaylorGreenConfig& config,
   const double energy_error =
       std::abs(kinetic_energy(velocity) - exact_energy) / exact_energy;
   return TaylorGreenValidation{
-      .reference_dataset = "analytic_taylor_green_decay",
+      .reference_dataset = is_3d_case(config) ? "analytic_taylor_green_decay_3d"
+                                              : "analytic_taylor_green_decay_2d",
       .normalized_energy_error = energy_error,
       .velocity_relative_l2_error = velocity_relative_l2_error(velocity, config, metrics.time),
       .exact_kinetic_energy = exact_energy,
@@ -335,6 +443,8 @@ TaylorGreenConfig load_taylor_green_config(const std::string& path) {
       config.nx = std::stoi(value);
     } else if(key == "ny") {
       config.ny = std::stoi(value);
+    } else if(key == "nz") {
+      config.nz = std::stoi(value);
     } else if(key == "viscosity") {
       config.viscosity = std::stod(value);
     } else if(key == "cfl_limit") {
@@ -358,7 +468,7 @@ TaylorGreenConfig load_taylor_green_config(const std::string& path) {
 
 std::string describe(const TaylorGreenConfig& config) {
   std::ostringstream builder;
-  builder << "nx=" << config.nx << ", ny=" << config.ny
+  builder << "nx=" << config.nx << ", ny=" << config.ny << ", nz=" << config.nz
           << ", viscosity=" << config.viscosity
           << ", cfl_limit=" << config.cfl_limit
           << ", final_time=" << config.final_time
@@ -369,10 +479,25 @@ std::string describe(const TaylorGreenConfig& config) {
   return builder.str();
 }
 
-BoundaryConditionSet make_taylor_green_boundary_conditions() {
+Grid make_taylor_green_grid(const TaylorGreenConfig& config) {
+  validate_config(config);
+  return Grid{
+      config.nx,
+      config.ny,
+      config.nz,
+      domain_length() / static_cast<double>(config.nx),
+      domain_length() / static_cast<double>(config.ny),
+      is_3d_case(config) ? domain_length() / static_cast<double>(config.nz) : 1.0,
+      1,
+  };
+}
+
+BoundaryConditionSet make_taylor_green_boundary_conditions(const TaylorGreenConfig& config) {
   BoundaryConditionSet boundary_conditions = BoundaryConditionSet::all(PhysicalBoundaryType::periodic);
-  boundary_conditions[BoundaryFace::z_min].type = PhysicalBoundaryType::symmetry;
-  boundary_conditions[BoundaryFace::z_max].type = PhysicalBoundaryType::symmetry;
+  if(!is_3d_case(config)) {
+    boundary_conditions[BoundaryFace::z_min].type = PhysicalBoundaryType::symmetry;
+    boundary_conditions[BoundaryFace::z_max].type = PhysicalBoundaryType::symmetry;
+  }
   return boundary_conditions;
 }
 
@@ -384,15 +509,7 @@ TaylorGreenState::TaylorGreenState(const Grid& grid_in)
 
 double taylor_green_dt(const TaylorGreenConfig& config) {
   validate_config(config);
-
-  const double domain_length = 2.0 * pi();
-  const Grid grid{config.nx,
-                  config.ny,
-                  1,
-                  domain_length / static_cast<double>(config.nx),
-                  domain_length / static_cast<double>(config.ny),
-                  1.0,
-                  1};
+  const Grid grid = make_taylor_green_grid(config);
   const double dt_upper = stable_dt_upper_bound(grid, config);
   const int step_count = std::max(1, static_cast<int>(std::ceil(config.final_time / dt_upper)));
   return config.final_time / static_cast<double>(step_count);
@@ -400,17 +517,13 @@ double taylor_green_dt(const TaylorGreenConfig& config) {
 
 TaylorGreenState initialize_taylor_green_state(const TaylorGreenConfig& config) {
   validate_config(config);
-  const double domain_length = 2.0 * pi();
-  const Grid grid{config.nx,
-                  config.ny,
-                  1,
-                  domain_length / static_cast<double>(config.nx),
-                  domain_length / static_cast<double>(config.ny),
-                  1.0,
-                  1};
+  const Grid grid = make_taylor_green_grid(config);
   TaylorGreenState state{grid};
   state.metrics.dt = taylor_green_dt(config);
-  initialize_exact_state(config, make_taylor_green_boundary_conditions(), state.velocity, state.pressure_total);
+  initialize_exact_state(config,
+                         make_taylor_green_boundary_conditions(config),
+                         state.velocity,
+                         state.pressure_total);
   state.advection_previous.fill(0.0);
   return state;
 }
@@ -423,20 +536,15 @@ void run_taylor_green_steps(const TaylorGreenConfig& config,
     throw std::invalid_argument("run_taylor_green_steps expects a non-negative step count");
   }
 
-  const double domain_length = 2.0 * pi();
-  const Grid expected_grid{config.nx,
-                           config.ny,
-                           1,
-                           domain_length / static_cast<double>(config.nx),
-                           domain_length / static_cast<double>(config.ny),
-                           1.0,
-                           1};
+  const Grid expected_grid = make_taylor_green_grid(config);
   if(state.grid.nx != expected_grid.nx || state.grid.ny != expected_grid.ny ||
-     std::abs(state.grid.dx - expected_grid.dx) > 0.0 || std::abs(state.grid.dy - expected_grid.dy) > 0.0) {
+     state.grid.nz != expected_grid.nz || std::abs(state.grid.dx - expected_grid.dx) > 0.0 ||
+     std::abs(state.grid.dy - expected_grid.dy) > 0.0 ||
+     std::abs(state.grid.dz - expected_grid.dz) > 0.0) {
     throw std::invalid_argument("Taylor-Green state grid does not match the config");
   }
 
-  const BoundaryConditionSet boundary_conditions = make_taylor_green_boundary_conditions();
+  const BoundaryConditionSet boundary_conditions = make_taylor_green_boundary_conditions(config);
   const double dt = taylor_green_dt(config);
   const double predictor_alpha = 0.5 * config.viscosity * dt;
   const ProjectionOptions projection_options{

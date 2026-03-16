@@ -2,5 +2,5 @@
 
 | Case | Avg Seconds | Throughput | Lower-Bound BW (GB/s) | Avg Iterations | Avg Residual | MG Levels |
 | --- | --- | --- | --- | --- | --- | --- |
-| advection_256x256 | 5.160040e-03 | cell_updates_per_second=1.270070e+07 | 0.814 |  |  |  |
-| pressure_poisson_256x256 | 2.220740e-01 | unknown_updates_per_second=2.951090e+05 |  | 16.00 | 4.185e-11 | 8 |
+| advection_256x256 | 3.480640e-03 | cell_updates_per_second=1.882870e+07 | 1.207 |  |  |  |
+| pressure_poisson_256x256 | 3.360500e-02 | unknown_updates_per_second=1.950190e+06 |  | 16.00 | 4.185e-11 | 8 |

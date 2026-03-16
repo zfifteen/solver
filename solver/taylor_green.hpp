@@ -10,6 +10,7 @@ namespace solver {
 struct TaylorGreenConfig {
   int nx = 128;
   int ny = 128;
+  int nz = 1;
   double viscosity = 0.01;
   double cfl_limit = 0.5;
   double final_time = 0.5;
@@ -61,7 +62,9 @@ struct TaylorGreenResult {
 [[nodiscard]] TaylorGreenConfig default_taylor_green_config();
 [[nodiscard]] TaylorGreenConfig load_taylor_green_config(const std::string& path);
 [[nodiscard]] std::string describe(const TaylorGreenConfig& config);
-[[nodiscard]] BoundaryConditionSet make_taylor_green_boundary_conditions();
+[[nodiscard]] Grid make_taylor_green_grid(const TaylorGreenConfig& config);
+[[nodiscard]] BoundaryConditionSet make_taylor_green_boundary_conditions(
+    const TaylorGreenConfig& config);
 [[nodiscard]] double taylor_green_dt(const TaylorGreenConfig& config);
 [[nodiscard]] TaylorGreenState initialize_taylor_green_state(const TaylorGreenConfig& config);
 void run_taylor_green_steps(const TaylorGreenConfig& config, int step_count, TaylorGreenState& state);

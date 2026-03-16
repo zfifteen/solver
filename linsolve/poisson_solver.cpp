@@ -409,14 +409,14 @@ void restrict_full_weighting(const PressureField& fine, PressureField& coarse) {
         for(int dz = 0; dz < ratio_z; ++dz) {
           for(int dy = 0; dy < ratio_y; ++dy) {
             for(int dx = 0; dx < ratio_x; ++dx) {
-              const Index3D fine_index = fine.layout().storage_index_from_active(
+              const Index3D fine_index = fine.layout().unchecked_storage_index_from_active(
                   ic * ratio_x + dx, jc * ratio_y + dy, kc * ratio_z + dz);
               sum += fine(fine_index.i, fine_index.j, fine_index.k);
             }
           }
         }
 
-        const Index3D coarse_index = coarse.layout().storage_index_from_active(ic, jc, kc);
+        const Index3D coarse_index = coarse.layout().unchecked_storage_index_from_active(ic, jc, kc);
         coarse(coarse_index.i, coarse_index.j, coarse_index.k) = inverse_children * sum;
       }
     }
@@ -433,13 +433,13 @@ void prolongate_and_add(const PressureField& coarse, PressureField& fine) {
   for(int kc = 0; kc < coarse_extent.nz; ++kc) {
     for(int jc = 0; jc < coarse_extent.ny; ++jc) {
       for(int ic = 0; ic < coarse_extent.nx; ++ic) {
-        const Index3D coarse_index = coarse.layout().storage_index_from_active(ic, jc, kc);
+        const Index3D coarse_index = coarse.layout().unchecked_storage_index_from_active(ic, jc, kc);
         const double coarse_value = coarse(coarse_index.i, coarse_index.j, coarse_index.k);
 
         for(int dz = 0; dz < ratio_z; ++dz) {
           for(int dy = 0; dy < ratio_y; ++dy) {
             for(int dx = 0; dx < ratio_x; ++dx) {
-              const Index3D fine_index = fine.layout().storage_index_from_active(
+              const Index3D fine_index = fine.layout().unchecked_storage_index_from_active(
                   ic * ratio_x + dx, jc * ratio_y + dy, kc * ratio_z + dz);
               fine(fine_index.i, fine_index.j, fine_index.k) += coarse_value;
             }

@@ -1,5 +1,6 @@
 case,reference_dataset,metric_key,metric_value,divergence_l2,threshold,benchmark_status
 couette_128,analytic_couette_profile,profile_relative_l2_error,0.0024591,3.63261e-12,profile_relative_l2_error <= 5e-3; divergence_l2 <= 1e-10,pass
 poiseuille_128,analytic_poiseuille_profile,profile_relative_l2_error,2.2394e-05,3.93086e-14,profile_relative_l2_error <= 5e-3; divergence_l2 <= 1e-10,pass
-lid_driven_cavity_re100_128,Re100_centerline_literature_envelope,max_reference_relative_error,0.0027765,2.1036e-15,named centerline sample points inside accepted envelope with miss <= 2%; divergence_l2 <= 1e-10,pass
-taylor_green_128,analytic_taylor_green_decay,normalized_energy_error,0.000701798,9.22131e-16,normalized_energy_error <= 1e-2; divergence_l2 <= 1e-10,pass
+lid_driven_cavity_re100_128,Re100_centerline_literature_envelope,max_reference_relative_error,0.0027765,2.11066e-15,named centerline sample points inside accepted envelope with miss <= 2%; divergence_l2 <= 1e-10,pass
+taylor_green_128,analytic_taylor_green_decay_2d,normalized_energy_error,0.000701798,9.23806e-16,normalized_energy_error <= 1e-2; divergence_l2 <= 1e-10,pass
+taylor_green_3d_64,analytic_taylor_green_decay_3d,normalized_energy_error,0.00248876,8.72758e-16,normalized_energy_error <= 1e-2; divergence_l2 <= 1e-10,pass

@@ -1530,13 +1530,14 @@ void test_channel_flow_poiseuille_profile_validation() {
 void test_taylor_green_config_loader_and_boundary_conditions() {
   const solver::TaylorGreenConfig config = solver::load_taylor_green_config(
       source_path("benchmarks/taylor_green_smoke.cfg"));
-  require(config.nx == 48 && config.ny == 48, "Taylor-Green smoke config should load the grid size");
+  require(config.nx == 48 && config.ny == 48 && config.nz == 1,
+          "Taylor-Green smoke config should load the 2D grid size");
   require(std::abs(config.viscosity - 0.01) <= 1.0e-12,
           "Taylor-Green smoke viscosity mismatch");
   require(config.validate_energy, "Taylor-Green smoke config should validate the decay");
 
   const solver::BoundaryConditionSet boundary_conditions =
-      solver::make_taylor_green_boundary_conditions();
+      solver::make_taylor_green_boundary_conditions(config);
   require(boundary_conditions[solver::BoundaryFace::x_min].type ==
               solver::PhysicalBoundaryType::periodic,
           "Taylor-Green x_min should be periodic");
@@ -1557,6 +1558,35 @@ void test_taylor_green_config_loader_and_boundary_conditions() {
           "Taylor-Green z_max should map to symmetry");
 }
 
+void test_taylor_green_3d_config_loader_and_boundary_conditions() {
+  const solver::TaylorGreenConfig config = solver::load_taylor_green_config(
+      source_path("benchmarks/taylor_green_3d_smoke.cfg"));
+  require(config.nx == 40 && config.ny == 40 && config.nz == 40,
+          "Taylor-Green 3D smoke config should load the full 3D grid size");
+  require(config.validate_energy, "Taylor-Green 3D smoke config should validate the decay");
+
+  const solver::BoundaryConditionSet boundary_conditions =
+      solver::make_taylor_green_boundary_conditions(config);
+  require(boundary_conditions[solver::BoundaryFace::x_min].type ==
+              solver::PhysicalBoundaryType::periodic,
+          "Taylor-Green 3D x_min should be periodic");
+  require(boundary_conditions[solver::BoundaryFace::x_max].type ==
+              solver::PhysicalBoundaryType::periodic,
+          "Taylor-Green 3D x_max should be periodic");
+  require(boundary_conditions[solver::BoundaryFace::y_min].type ==
+              solver::PhysicalBoundaryType::periodic,
+          "Taylor-Green 3D y_min should be periodic");
+  require(boundary_conditions[solver::BoundaryFace::y_max].type ==
+              solver::PhysicalBoundaryType::periodic,
+          "Taylor-Green 3D y_max should be periodic");
+  require(boundary_conditions[solver::BoundaryFace::z_min].type ==
+              solver::PhysicalBoundaryType::periodic,
+          "Taylor-Green 3D z_min should be periodic");
+  require(boundary_conditions[solver::BoundaryFace::z_max].type ==
+              solver::PhysicalBoundaryType::periodic,
+          "Taylor-Green 3D z_max should be periodic");
+}
+
 void test_taylor_green_smoke_validation() {
   const solver::TaylorGreenConfig config = solver::load_taylor_green_config(
       source_path("benchmarks/taylor_green_smoke.cfg"));
@@ -1569,11 +1599,30 @@ void test_taylor_green_smoke_validation() {
           "Taylor-Green CFL should respect the configured ceiling");
   require(result.final_step.divergence_l2 <= 1.0e-10,
           "Taylor-Green smoke run should remain divergence free");
-  require(result.validation.reference_dataset == "analytic_taylor_green_decay",
-          "Taylor-Green validation should report the analytic decay dataset");
+  require(result.validation.reference_dataset == "analytic_taylor_green_decay_2d",
+          "Taylor-Green validation should report the 2D analytic decay dataset");
   require(result.validation.normalized_energy_error <= 1.0e-2,
           "Taylor-Green smoke energy error exceeded the M9 threshold");
   require(result.validation.pass, "Taylor-Green smoke validation should pass");
+}
+
+void test_taylor_green_3d_smoke_validation() {
+  const solver::TaylorGreenConfig config = solver::load_taylor_green_config(
+      source_path("benchmarks/taylor_green_3d_smoke.cfg"));
+  const solver::TaylorGreenResult result = solver::run_taylor_green(config);
+
+  require(result.final_step.step > 0, "Taylor-Green 3D smoke run should advance at least one step");
+  require(std::abs(result.final_step.time - config.final_time) <= 1.0e-12,
+          "Taylor-Green 3D smoke run should land on the configured final time");
+  require(result.final_step.max_cfl <= config.cfl_limit + 1.0e-12,
+          "Taylor-Green 3D CFL should respect the configured ceiling");
+  require(result.final_step.divergence_l2 <= 1.0e-10,
+          "Taylor-Green 3D smoke run should remain divergence free");
+  require(result.validation.reference_dataset == "analytic_taylor_green_decay_3d",
+          "Taylor-Green 3D validation should report the 3D analytic decay dataset");
+  require(result.validation.normalized_energy_error <= 1.0e-2,
+          "Taylor-Green 3D smoke energy error exceeded the M12 threshold");
+  require(result.validation.pass, "Taylor-Green 3D smoke validation should pass");
 }
 
 void test_lid_driven_cavity_checkpoint_roundtrip_and_checksum() {
@@ -1822,7 +1871,9 @@ int main() {
     test_channel_flow_couette_profile_validation();
     test_channel_flow_poiseuille_profile_validation();
     test_taylor_green_config_loader_and_boundary_conditions();
+    test_taylor_green_3d_config_loader_and_boundary_conditions();
     test_taylor_green_smoke_validation();
+    test_taylor_green_3d_smoke_validation();
     test_lid_driven_cavity_checkpoint_roundtrip_and_checksum();
     test_lid_driven_cavity_restart_is_bitwise_deterministic();
     test_lid_driven_cavity_vtk_export();

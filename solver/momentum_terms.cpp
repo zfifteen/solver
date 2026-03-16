@@ -113,9 +113,46 @@ double reconstruct_face_y(const StructuredField& field,
   return upper - 0.5 * limiter_value(options.limiter, ratio) * delta;
 }
 
-void compute_u_advection_2d(const VelocityField& velocity,
-                            const AdvectionOptions& options,
-                            FaceField& output) {
+double reconstruct_face_z(const StructuredField& field,
+                          const int i,
+                          const int j,
+                          const int k_right,
+                          const double face_velocity,
+                          const AdvectionOptions& options) {
+  const double back = field(i, j, k_right - 1);
+  const double front = field(i, j, k_right);
+
+  if(options.scheme == AdvectionScheme::central) {
+    return 0.5 * (back + front);
+  }
+
+  if(options.scheme == AdvectionScheme::upwind || std::abs(face_velocity) < kSmallDenominator) {
+    return face_velocity >= 0.0 ? back : front;
+  }
+
+  const int max_k = field.layout().storage_extent().nz - 1;
+  if(face_velocity >= 0.0) {
+    if(k_right - 2 < 0) {
+      return back;
+    }
+
+    const double delta_down = front - back;
+    const double ratio = safe_ratio(back - field(i, j, k_right - 2), delta_down);
+    return back + 0.5 * limiter_value(options.limiter, ratio) * delta_down;
+  }
+
+  if(k_right + 1 > max_k) {
+    return front;
+  }
+
+  const double delta = front - back;
+  const double ratio = safe_ratio(field(i, j, k_right + 1) - front, delta);
+  return front - 0.5 * limiter_value(options.limiter, ratio) * delta;
+}
+
+void compute_u_advection(const VelocityField& velocity,
+                         const AdvectionOptions& options,
+                         FaceField& output) {
   const IndexRange3D active = velocity.x.layout().active_range();
   const Grid& grid = velocity.x.layout().grid();
 
@@ -126,6 +163,9 @@ void compute_u_advection_2d(const VelocityField& velocity,
         const double east_velocity = 0.5 * (velocity.x(i, j, k) + velocity.x(i + 1, j, k));
         const double south_velocity = 0.5 * (velocity.y(i - 1, j, k) + velocity.y(i, j, k));
         const double north_velocity = 0.5 * (velocity.y(i - 1, j + 1, k) + velocity.y(i, j + 1, k));
+        const double back_velocity = 0.5 * (velocity.z(i - 1, j, k) + velocity.z(i, j, k));
+        const double front_velocity =
+            0.5 * (velocity.z(i - 1, j, k + 1) + velocity.z(i, j, k + 1));
 
         const double west_flux =
             west_velocity * reconstruct_face_x(velocity.x, i, j, k, west_velocity, options);
@@ -135,16 +175,22 @@ void compute_u_advection_2d(const VelocityField& velocity,
             south_velocity * reconstruct_face_y(velocity.x, i, j, k, south_velocity, options);
         const double north_flux =
             north_velocity * reconstruct_face_y(velocity.x, i, j + 1, k, north_velocity, options);
+        const double back_flux =
+            back_velocity * reconstruct_face_z(velocity.x, i, j, k, back_velocity, options);
+        const double front_flux =
+            front_velocity * reconstruct_face_z(velocity.x, i, j, k + 1, front_velocity, options);
 
-        output(i, j, k) = (east_flux - west_flux) / grid.dx + (north_flux - south_flux) / grid.dy;
+        output(i, j, k) = (east_flux - west_flux) / grid.dx +
+                          (north_flux - south_flux) / grid.dy +
+                          (front_flux - back_flux) / grid.dz;
       }
     }
   }
 }
 
-void compute_v_advection_2d(const VelocityField& velocity,
-                            const AdvectionOptions& options,
-                            FaceField& output) {
+void compute_v_advection(const VelocityField& velocity,
+                         const AdvectionOptions& options,
+                         FaceField& output) {
   const IndexRange3D active = velocity.y.layout().active_range();
   const Grid& grid = velocity.y.layout().grid();
 
@@ -155,6 +201,9 @@ void compute_v_advection_2d(const VelocityField& velocity,
         const double east_velocity = 0.5 * (velocity.x(i + 1, j - 1, k) + velocity.x(i + 1, j, k));
         const double south_velocity = 0.5 * (velocity.y(i, j - 1, k) + velocity.y(i, j, k));
         const double north_velocity = 0.5 * (velocity.y(i, j, k) + velocity.y(i, j + 1, k));
+        const double back_velocity = 0.5 * (velocity.z(i, j - 1, k) + velocity.z(i, j, k));
+        const double front_velocity =
+            0.5 * (velocity.z(i, j - 1, k + 1) + velocity.z(i, j, k + 1));
 
         const double west_flux =
             west_velocity * reconstruct_face_x(velocity.y, i, j, k, west_velocity, options);
@@ -164,32 +213,36 @@ void compute_v_advection_2d(const VelocityField& velocity,
             south_velocity * reconstruct_face_y(velocity.y, i, j, k, south_velocity, options);
         const double north_flux =
             north_velocity * reconstruct_face_y(velocity.y, i, j + 1, k, north_velocity, options);
+        const double back_flux =
+            back_velocity * reconstruct_face_z(velocity.y, i, j, k, back_velocity, options);
+        const double front_flux =
+            front_velocity * reconstruct_face_z(velocity.y, i, j, k + 1, front_velocity, options);
 
-        output(i, j, k) = (east_flux - west_flux) / grid.dx + (north_flux - south_flux) / grid.dy;
+        output(i, j, k) = (east_flux - west_flux) / grid.dx +
+                          (north_flux - south_flux) / grid.dy +
+                          (front_flux - back_flux) / grid.dz;
       }
     }
   }
 }
 
-void compute_w_advection_2d(const VelocityField& velocity,
-                            const AdvectionOptions& options,
-                            FaceField& output) {
+void compute_w_advection(const VelocityField& velocity,
+                         const AdvectionOptions& options,
+                         FaceField& output) {
   const IndexRange3D active = velocity.z.layout().active_range();
-  const IndexRange3D u_active = velocity.x.layout().active_range();
-  const IndexRange3D v_active = velocity.y.layout().active_range();
-  const int u_k = u_active.k_begin;
-  const int v_k = v_active.k_begin;
   const Grid& grid = velocity.z.layout().grid();
 
   for(int k = active.k_begin; k < active.k_end; ++k) {
     for(int j = active.j_begin; j < active.j_end; ++j) {
       for(int i = active.i_begin; i < active.i_end; ++i) {
-        const double west_velocity = 0.5 * (velocity.x(i, j - 1, u_k) + velocity.x(i, j, u_k));
+        const double west_velocity = 0.5 * (velocity.x(i, j, k - 1) + velocity.x(i, j, k));
         const double east_velocity =
-            0.5 * (velocity.x(i + 1, j - 1, u_k) + velocity.x(i + 1, j, u_k));
-        const double south_velocity = 0.5 * (velocity.y(i - 1, j, v_k) + velocity.y(i, j, v_k));
+            0.5 * (velocity.x(i + 1, j, k - 1) + velocity.x(i + 1, j, k));
+        const double south_velocity = 0.5 * (velocity.y(i, j, k - 1) + velocity.y(i, j, k));
         const double north_velocity =
-            0.5 * (velocity.y(i - 1, j + 1, v_k) + velocity.y(i, j + 1, v_k));
+            0.5 * (velocity.y(i, j + 1, k - 1) + velocity.y(i, j + 1, k));
+        const double back_velocity = 0.5 * (velocity.z(i, j, k - 1) + velocity.z(i, j, k));
+        const double front_velocity = 0.5 * (velocity.z(i, j, k) + velocity.z(i, j, k + 1));
 
         const double west_flux =
             west_velocity * reconstruct_face_x(velocity.z, i, j, k, west_velocity, options);
@@ -199,8 +252,14 @@ void compute_w_advection_2d(const VelocityField& velocity,
             south_velocity * reconstruct_face_y(velocity.z, i, j, k, south_velocity, options);
         const double north_flux =
             north_velocity * reconstruct_face_y(velocity.z, i, j + 1, k, north_velocity, options);
+        const double back_flux =
+            back_velocity * reconstruct_face_z(velocity.z, i, j, k, back_velocity, options);
+        const double front_flux =
+            front_velocity * reconstruct_face_z(velocity.z, i, j, k + 1, front_velocity, options);
 
-        output(i, j, k) = (east_flux - west_flux) / grid.dx + (north_flux - south_flux) / grid.dy;
+        output(i, j, k) = (east_flux - west_flux) / grid.dx +
+                          (north_flux - south_flux) / grid.dy +
+                          (front_flux - back_flux) / grid.dz;
       }
     }
   }
@@ -249,14 +308,9 @@ void compute_advection_term(const VelocityField& velocity,
                             const AdvectionOptions& options,
                             VelocityField& advection) {
   require_same_velocity_layouts(velocity, advection, "compute_advection_term");
-
-  if(!velocity.x.layout().grid().is_2d()) {
-    throw std::invalid_argument("compute_advection_term currently supports 2D grids only");
-  }
-
-  compute_u_advection_2d(velocity, options, advection.x);
-  compute_v_advection_2d(velocity, options, advection.y);
-  compute_w_advection_2d(velocity, options, advection.z);
+  compute_u_advection(velocity, options, advection.x);
+  compute_v_advection(velocity, options, advection.y);
+  compute_w_advection(velocity, options, advection.z);
 }
 
 void compute_diffusion_term(const VelocityField& velocity,

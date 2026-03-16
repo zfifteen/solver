@@ -109,6 +109,14 @@ class FieldLayout {
     return storage_.cell_count();
   }
 
+  [[nodiscard]] constexpr std::size_t storage_stride_j() const noexcept {
+    return static_cast<std::size_t>(storage_.nx);
+  }
+
+  [[nodiscard]] constexpr std::size_t storage_stride_k() const noexcept {
+    return static_cast<std::size_t>(storage_.nx) * static_cast<std::size_t>(storage_.ny);
+  }
+
   [[nodiscard]] constexpr bool same_shape_as(const FieldLayout& other) const noexcept {
     return location_ == other.location_ && ghost_layers_ == other.ghost_layers_ &&
            active_.nx == other.active_.nx && active_.ny == other.active_.ny &&
@@ -146,6 +154,12 @@ class FieldLayout {
       throw std::out_of_range("active index outside field extent");
     }
 
+    return unchecked_storage_index_from_active(i, j, k);
+  }
+
+  [[nodiscard]] constexpr Index3D unchecked_storage_index_from_active(const int i,
+                                                                      const int j,
+                                                                      const int k) const noexcept {
     return Index3D{
         .i = i + ghost_layers_,
         .j = j + ghost_layers_,
@@ -158,10 +172,14 @@ class FieldLayout {
       throw std::out_of_range("storage index outside field extent");
     }
 
-    return static_cast<std::size_t>(i) +
-           static_cast<std::size_t>(storage_.nx) *
-               (static_cast<std::size_t>(j) +
-                static_cast<std::size_t>(storage_.ny) * static_cast<std::size_t>(k));
+    return unchecked_index(i, j, k);
+  }
+
+  [[nodiscard]] constexpr std::size_t unchecked_index(const int i,
+                                                      const int j,
+                                                      const int k) const noexcept {
+    return static_cast<std::size_t>(i) + storage_stride_j() * static_cast<std::size_t>(j) +
+           storage_stride_k() * static_cast<std::size_t>(k);
   }
 
   [[nodiscard]] IndexRange3D boundary_active_range(const BoundaryFace face) const {

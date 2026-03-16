@@ -1,2 +1,2 @@
 compute_threads,cells_per_second,status,note
-1,289544.8275862069,baseline_only,Current solver path is single-threaded; thread-scaling study opens in Milestone 11.
+1,1158179.3103448276,baseline_only,Current solver path remains single-threaded after the first M11 optimization pass; deeper thread scaling is still future work.

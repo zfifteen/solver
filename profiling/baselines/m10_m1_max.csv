@@ -1,0 +1,6 @@
+metric,label,baseline_value,units
+advection_256x256_throughput,Advection microbenchmark throughput,1.270070e+07,cell_updates_per_second
+pressure_poisson_256x256_throughput,Pressure microbenchmark throughput,2.951090e+05,unknown_updates_per_second
+taylor_green_128_cells_per_second,Taylor-Green end-to-end throughput,2.907983e+05,cells_per_second
+channel_couette_128_cells_per_second,Channel Couette end-to-end throughput,2.978909e+05,cells_per_second
+cavity_smoke_32_steps256_cells_per_second,Cavity smoke end-to-end throughput,2.849391e+05,cells_per_second

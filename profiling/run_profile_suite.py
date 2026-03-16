@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the Milestone 10 profiling suite.")
+    parser = argparse.ArgumentParser(description="Run the Milestone 11 profiling and optimization suite.")
     parser.add_argument(
         "--build-dir",
         default="build/benchmark",
@@ -567,7 +567,7 @@ def write_thread_scaling_baseline(output_dir: Path, reference_cells_per_second: 
             "compute_threads": 1,
             "cells_per_second": reference_cells_per_second,
             "status": "baseline_only",
-            "note": "Current solver path is single-threaded; thread-scaling study opens in Milestone 11.",
+            "note": "Current solver path remains single-threaded after the first M11 optimization pass; deeper thread scaling is still future work.",
         }
     ]
     write_csv(output_dir / "thread_scaling.csv", ["compute_threads", "cells_per_second", "status", "note"], rows)
@@ -582,6 +582,91 @@ def write_thread_scaling_baseline(output_dir: Path, reference_cells_per_second: 
                 str(rows[0]["status"]),
                 str(rows[0]["note"]),
             ]],
+        )
+        + "\n",
+    )
+
+
+def load_baseline_metrics(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        return {str(row["metric"]): row for row in reader}
+
+
+def write_baseline_comparison(
+    output_dir: Path,
+    hardware: dict[str, str],
+    kernel_rows: list[dict[str, object]],
+    throughput_rows: list[dict[str, object]],
+) -> None:
+    baseline_path = Path(__file__).resolve().parent / "baselines" / "m10_m1_max.csv"
+    baselines = load_baseline_metrics(baseline_path)
+    if not baselines:
+        return
+
+    current_metrics = {
+        "advection_256x256_throughput": float(
+            next(row for row in kernel_rows if row["case"] == "advection_256x256")["throughput"]
+        ),
+        "pressure_poisson_256x256_throughput": float(
+            next(row for row in kernel_rows if row["case"] == "pressure_poisson_256x256")["throughput"]
+        ),
+        "taylor_green_128_cells_per_second": float(
+            next(row for row in throughput_rows if row["case"] == "taylor_green_128")["cells_per_second"]
+        ),
+        "channel_couette_128_cells_per_second": float(
+            next(row for row in throughput_rows if row["case"] == "channel_couette_128")["cells_per_second"]
+        ),
+        "cavity_smoke_32_steps256_cells_per_second": float(
+            next(row for row in throughput_rows if row["case"] == "cavity_smoke_32_steps256")["cells_per_second"]
+        ),
+    }
+
+    rows: list[dict[str, object]] = []
+    for metric, baseline in baselines.items():
+        if metric not in current_metrics:
+            continue
+
+        baseline_value = float(baseline["baseline_value"])
+        current_value = current_metrics[metric]
+        speedup = current_value / baseline_value if baseline_value > 0.0 else math.nan
+        rows.append(
+            {
+                "metric": metric,
+                "label": baseline["label"],
+                "baseline_value": baseline_value,
+                "current_value": current_value,
+                "speedup": speedup,
+                "percent_improvement": (speedup - 1.0) * 100.0,
+                "units": baseline["units"],
+            }
+        )
+
+    write_csv(
+        output_dir / "improvement_vs_m10.csv",
+        ["metric", "label", "baseline_value", "current_value", "speedup", "percent_improvement", "units"],
+        rows,
+    )
+    write_text(
+        output_dir / "improvement_vs_m10.md",
+        "# Milestone 10 to Milestone 11 Improvement\n\n"
+        + f"Baseline source: `{baseline_path.name}` on `{hardware['cpu']}`.\n\n"
+        + markdown_table(
+            ["Metric", "M10 Baseline", "M11 Current", "Speedup", "Improvement", "Units"],
+            [
+                [
+                    str(row["label"]),
+                    f'{float(row["baseline_value"]):.6e}',
+                    f'{float(row["current_value"]):.6e}',
+                    f'{float(row["speedup"]):.3f}x',
+                    f'{float(row["percent_improvement"]):.1f}%',
+                    str(row["units"]),
+                ]
+                for row in rows
+            ],
         )
         + "\n",
     )
@@ -616,6 +701,22 @@ def write_summary(
     pressure_row = next(row for row in kernel_rows if row["case"] == "pressure_poisson_256x256")
     advection_row = next(row for row in kernel_rows if row["case"] == "advection_256x256")
     taylor_row = next(row for row in throughput_rows if row["case"] == "taylor_green_128")
+    m10_baselines = load_baseline_metrics(Path(__file__).resolve().parent / "baselines" / "m10_m1_max.csv")
+    comparison_lines: list[str] = []
+    for metric, current_value in (
+        ("advection_256x256_throughput", float(advection_row["throughput"])),
+        ("pressure_poisson_256x256_throughput", float(pressure_row["throughput"])),
+        ("taylor_green_128_cells_per_second", float(taylor_row["cells_per_second"])),
+    ):
+        if metric not in m10_baselines:
+            continue
+        baseline_value = float(m10_baselines[metric]["baseline_value"])
+        if baseline_value <= 0.0:
+            continue
+        speedup = current_value / baseline_value
+        comparison_lines.append(
+            f"- {m10_baselines[metric]['label']}: {speedup:.3f}x vs the stored Milestone 10 M1 Max baseline."
+        )
 
     top_categories: Counter[str] = Counter()
     for row in hotspot_rows:
@@ -634,17 +735,21 @@ def write_summary(
             "## Findings",
             "",
             f"- Recommended default execution mode: benchmark build profile with the default unclamped scheduler policy. It was the fastest measured policy on this machine.",
-            f"- Current compute-thread recommendation: 1. The solver path remains single-threaded, so thread scaling is a baseline-only study for now.",
+            f"- Current compute-thread recommendation: 1. The solver path remains single-threaded after the first M11 optimization pass, so thread scaling is still a baseline-only study for now.",
             f"- Advection microbenchmark throughput: {float(advection_row['throughput']):.6e} cell updates/s with a {float(advection_row['lower_bound_bandwidth_gbps']):.3f} GB/s lower-bound bandwidth estimate.",
             f"- Pressure microbenchmark throughput: {float(pressure_row['throughput']):.6e} unknown updates/s with {float(pressure_row['average_iterations']):.2f} average iterations.",
             f"- End-to-end Taylor-Green benchmark throughput: {float(taylor_row['cells_per_second']):.6e} cells/s.",
             f"- Default-policy hotspot categories were dominated by pressure-solve, predictor/ADI, and advection work, with the top sampled category counts: {dict(top_categories.most_common(4))}.",
             "",
+            "## Comparison To Milestone 10 Baseline",
+            "",
+            *comparison_lines,
+            "",
             "## Notes",
             "",
             "- QoS clamp measurements come from default, utility, and background taskpolicy launches.",
             "- Core-class shares come from xctrace Time Profiler samples on Apple Silicon and are reported as sampled P-core vs E-core shares.",
-            "- The thread-scaling section is intentionally explicit that the current solver path is single-threaded; Milestone 11 is where that changes.",
+            "- The thread-scaling section is intentionally explicit that the current solver path is still single-threaded after the first CPU optimization pass.",
             "",
         ]
     )
@@ -666,6 +771,7 @@ def main() -> int:
     policy_rows, hotspot_rows = run_policy_study(root, build_dir, output_dir)
     default_policy = next(row for row in policy_rows if row["policy"] == "default")
     write_thread_scaling_baseline(output_dir, float(default_policy["cells_per_second"]))
+    write_baseline_comparison(output_dir, hardware, kernel_rows, throughput_rows)
     write_summary(output_dir, hardware, kernel_rows, throughput_rows, policy_rows, hotspot_rows)
     return 0
 

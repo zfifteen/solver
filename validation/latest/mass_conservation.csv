@@ -1,5 +1,6 @@
 case,divergence_l2,threshold,pass
 couette_128,3.63261e-12,divergence_l2 <= 1e-10,True
 poiseuille_128,3.93086e-14,divergence_l2 <= 1e-10,True
-lid_driven_cavity_re100_128,2.1036e-15,divergence_l2 <= 1e-10,True
-taylor_green_128,9.22131e-16,divergence_l2 <= 1e-10,True
+lid_driven_cavity_re100_128,2.11066e-15,divergence_l2 <= 1e-10,True
+taylor_green_128,9.23806e-16,divergence_l2 <= 1e-10,True
+taylor_green_3d_64,8.72758e-16,divergence_l2 <= 1e-10,True

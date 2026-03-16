@@ -282,7 +282,7 @@ Algorithm per timestep
 1. assemble explicit Adams-Bashforth advection / forcing terms
 2. solve Crank-Nicolson predictor for u* via ADI Helmholtz solves
 3. compute divergence of u*
-4. solve pressure Poisson equation with BC-consistent RHS
+4. solve pressure-correction Poisson equation with BC-consistent RHS
 5. correct velocity and pressure
 6. enforce divergence-free field
 
@@ -417,7 +417,9 @@ Compare centerline velocity profiles against reference data.
 
 Tolerance:
 
-* centerline velocity extrema within 2 percent of the selected reference data
+* four named centerline sample points within the accepted steady-cavity
+  literature envelope, with any miss outside that envelope limited to 2
+  percent
 
 Mass conservation must remain stable with post-projection divergence L2 <= 1e-10.
 

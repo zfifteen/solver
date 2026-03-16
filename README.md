@@ -4,13 +4,13 @@ This repository is the beginning of a very specific kind of CFD project: an inco
 
 That combination matters here. A lot of scientific software grows by accumulating features first and worrying about rigor later. This project is trying to do the opposite. The solver is being designed from the outset around a clear numerical method, explicit validation gates, deterministic execution rules, and a roadmap that only moves forward when the previous layer is correct. If the end result works, it should be the kind of codebase a new engineer can open, reason about, benchmark, and trust.
 
-Right now, the repository is still early, but it has moved well past the "just scaffolding" stage. It still does not contain the full incompressible timestepper or the benchmark driver stack described in the technical spec, but the numerical core is starting to look like a real solver rather than a pile of placeholders. What it contains today is the locked-down foundation for that system plus the first complete pressure-coupling path: the build environment, the project structure, the profile split between validation and benchmarking, the structured-grid and field-storage layer, the discrete operators, the transport-term kernels, the projection machinery, and now the matrix-free MGPCG pressure solver that the later simulation milestones will depend on. In other words, this repo is already opinionated about how the solver should be built, validated, and evolved before the larger simulation and optimization passes arrive.
+Right now, the repository is still early, but it has moved well past the "just scaffolding" stage. It now contains the first full hardcoded simulation path rather than only isolated numerical building blocks. The codebase has the locked-down build environment, the structured-grid and field-storage layer, the discrete operators, the transport-term kernels, the projection machinery, the matrix-free MGPCG pressure solver, and now a working lid-driven cavity driver with a deterministic benchmark harness. In other words, this repo is already opinionated about how the solver should be built, validated, and evolved before the broader boundary-condition, restart, output, and optimization passes arrive.
 
-If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 5 of that plan.
+If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 6 of that plan.
 
 ## Current Status
 
-The repository is currently at **Milestone 5: Linear Solver System**.
+The repository is currently at **Milestone 6: Hardcoded Lid-Driven Cavity Benchmark**.
 
 Implemented today:
 
@@ -24,13 +24,17 @@ Implemented today:
 - manufactured-solution convergence checks for the operator layer
 - transport-term kernels for advection and diffusion
 - CFL diagnostics plus explicit advection-scheme and limiter configuration
-- bounded TVD advection with `van Leer` and a first-order upwind fallback
+- bounded TVD advection with `van Leer`, a first-order upwind fallback, and an optional central scheme for controlled investigations
 - pressure-projection path with BC mapping and null-space handling
 - deterministic ADI predictor solve with tridiagonal line solves
 - matrix-free pressure Poisson operator
 - MGPCG pressure solve with fixed V-cycle geometric multigrid preconditioning
 - damped-Jacobi multigrid smoothing and a direct coarse-grid solve
 - residual-history tracking plus multigrid policy diagnostics
+- full hardcoded lid-driven cavity timestepper for the Milestone 6 path
+- cavity-specific total-pressure ghost filling and projection-correction semantics
+- deterministic cavity benchmark executable plus smoke and validation configs
+- literature-envelope validation for the Re = 100 cavity gate
 - a smoke-test executable that reports build/runtime metadata
 - a minimal test executable wired into CTest
 - a simple time-based profiling helper script
@@ -38,13 +42,16 @@ Implemented today:
 
 What is not implemented yet:
 
-- full timestep assembly around the projection and pressure-solver building blocks
-- checkpointing, benchmark cases, and validation harnesses beyond the current infrastructure tests
+- generalized boundary-condition extraction beyond the hardcoded cavity subset
+- checkpointing, restart I/O, and durable output formats
+- broader verification and benchmark cases beyond the current cavity path
+- 3D simulation support and large-scale performance work
 
 Current implementation note:
 
-- the Milestone 3 advection kernel currently supports the planned 2D path; the broader 3D extension still belongs to the later roadmap milestones
-- the Milestone 5 pressure solver is in place for the current validation-scale problems, but the full simulation driver, benchmark cases, and large-scale profiling work still belong to later milestones
+- the advection kernel and the current cavity driver are still intentionally 2D-only
+- the Milestone 6 cavity path uses a hardcoded benchmark-specific boundary-condition subset; Milestone 7 is where that gets generalized
+- the cavity benchmark validates against a steady-cavity literature envelope rather than treating the coarse Ghia point table as the sole source of truth
 
 ## Project Goals
 
@@ -87,12 +94,14 @@ The full solver architecture is described in [TECH-SPEC.md](TECH-SPEC.md), but t
 - discretization: finite volume method on a staggered MAC grid
 - convective form: conservative `∇·(u⊗u)` form
 - default advection scheme: bounded second-order TVD with the `van Leer` limiter
+- optional advection alternatives: first-order upwind and centered fluxes for controlled comparisons
 - time integration: second-order semi-implicit pressure-correction scheme
 - explicit term startup: Forward Euler bootstrap into Adams-Bashforth 2
 - diffusion treatment: Crank-Nicolson with ADI Helmholtz line solves
 - pressure solve: MGPCG with fixed V-cycle multigrid and damped-Jacobi smoothing
 - precision policy: `double` for solution state and pressure-solver reductions
 - validation default: advective CFL `<= 0.5` unless a benchmark case says otherwise
+- current full-case benchmark: lid-driven cavity at `Re = 100` with a literature-envelope validation gate
 
 Parts of that numerical path are now implemented at the operator, transport, projection, and linear-solver layers, and the rest remains the governing design contract for the upcoming milestones.
 
@@ -118,10 +127,11 @@ What those directories mean in practice right now:
 - `core/`: runtime/build metadata plus the first structured-grid and field-storage layer
 - `operators/`: second-order structured-grid discrete operators
 - `linsolve/`: matrix-free pressure operator and MGPCG linear-solver implementation
-- `solver/`: transport-term kernels and projection helpers built on top of the linsolve layer
-- `tools/`: the smoke-test executable and profiling helper
-- `tests/`: the minimal CTest-backed test executable
-- `bc/`, `io/`, `benchmarks/`: reserved for later milestones
+- `solver/`: transport-term kernels, projection helpers, and the hardcoded cavity driver
+- `tools/`: the smoke executable, cavity benchmark executable, and profiling helper
+- `tests/`: the CTest-backed validation executable
+- `benchmarks/`: current cavity smoke and validation configs
+- `bc/`, `io/`: reserved for later milestones
 
 The technical and roadmap documents live at the repository root and currently act as the primary design references.
 
@@ -160,8 +170,9 @@ The current build produces:
 - `solver_core`: a small core library for runtime/build metadata and mesh/field infrastructure
 - `solver_operators`: the discrete-operator library built on top of the core field layer
 - `solver_linsolve`: matrix-free Poisson application plus MGPCG / geometric multigrid pressure solve
-- `solver_momentum`: advection, diffusion, CFL, and projection utilities layered on top of the linsolve path
+- `solver_momentum`: advection, diffusion, CFL, projection utilities, and the cavity driver layered on top of the linsolve path
 - `solver_example`: a smoke-test executable under `build/<profile>/tools/`
+- `solver_cavity`: the lid-driven cavity benchmark executable under `build/<profile>/tools/`
 - `solver_tests`: a minimal test executable under `build/<profile>/tests/`
 
 ## Testing
@@ -178,7 +189,19 @@ Run the benchmark-profile tests:
 ctest --test-dir build/benchmark --output-on-failure
 ```
 
-Today’s test coverage is still intentionally focused, but it now covers the full Milestone 5 gate. The current test executable checks that:
+Run the cavity smoke config:
+
+```bash
+build/deterministic/tools/solver_cavity benchmarks/lid_driven_cavity_smoke.cfg
+```
+
+Run the deterministic Milestone 6 benchmark gate:
+
+```bash
+build/deterministic/tools/solver_cavity benchmarks/lid_driven_cavity_re100_128.cfg
+```
+
+Today’s test coverage is still intentionally focused, but it now covers the full Milestone 6 gate. The current test executable checks that:
 
 - the build profile is one of the locked profile names
 - the runtime platform is Apple Silicon
@@ -197,13 +220,18 @@ Today’s test coverage is still intentionally focused, but it now covers the fu
 - CFL diagnostics and advection-config labels report the expected values
 - physical BC types map to the expected projection-side pressure BC rules
 - the ADI predictor preserves the quiescent state
+- the ADI predictor matches a dense factorized reference solve on a nontrivial case
+- the cavity total-pressure ghost fill follows the normal-momentum balance contract
+- the cavity predictor RHS includes the factorization correction term
 - the static-fluid projection path keeps the zero solution unchanged
 - the pure-Neumann projection path removes the pressure null space and restores a divergence-free field
 - the MGPCG solve recovers a known discrete Dirichlet solution to the required relative error
 - the MGPCG solve preserves zero-mean pressure for a pure-Neumann problem
 - the MGPCG residual converges to the required relative tolerance and reports the fixed policy metadata
+- the cavity smoke run remains stable and divergence controlled
+- the cavity validation harness samples the named reference points correctly and rejects out-of-range results
 
-That is enough for Milestone 5. It is not meant to stand in for the full benchmark and regression suite described in the technical spec.
+That is enough for Milestone 6. It is not meant to stand in for the broader benchmark and regression suite described in the technical spec.
 
 ## Profiling
 
@@ -225,9 +253,10 @@ The implementation plan is spelled out in [EXECUTION_ROADMAP_V1.md](EXECUTION_RO
 4. Milestone 3: implement advection and diffusion terms
 5. Milestone 4: implement the projection step
 6. Milestone 5: implement the pressure linear solver system
-7. Milestone 6 and beyond: benchmark validation, boundary-condition generalization, restart/output, verification, profiling, optimization, 3D support, and conditional Metal acceleration
+7. Milestone 6: hardcoded cavity benchmark validation
+8. Milestone 7 and beyond: boundary-condition generalization, restart/output, broader verification, profiling, optimization, 3D support, and conditional Metal acceleration
 
-The repository has completed the first six items in that sequence at the numerical-core level and is set up to move into the first full simulation milestone next.
+The repository has completed the first seven items in that sequence for the current hardcoded cavity path and is set up to move into the first generalized boundary-condition milestone next.
 
 The important project rule is simple: **do not advance to the next milestone unless the current validation gate passes**.
 

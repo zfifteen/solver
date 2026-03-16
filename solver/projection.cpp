@@ -47,8 +47,35 @@ bool is_dirichlet_velocity_boundary(const BoundaryCondition& condition) {
          condition.type == PhysicalBoundaryType::symmetry;
 }
 
+struct GhostRelation {
+  double coefficient = 0.0;
+  double constant = 0.0;
+};
+
 double component_value(const BoundaryCondition& condition, const Axis axis) {
   return condition.velocity[static_cast<std::size_t>(axis_index(axis))];
+}
+
+GhostRelation tangential_ghost_relation(const BoundaryCondition& condition,
+                                        const Axis component_axis) {
+  switch(condition.type) {
+    case PhysicalBoundaryType::no_slip_wall:
+    case PhysicalBoundaryType::prescribed_velocity:
+      return GhostRelation{
+          .coefficient = -1.0,
+          .constant = 2.0 * component_value(condition, component_axis),
+      };
+    case PhysicalBoundaryType::symmetry:
+    case PhysicalBoundaryType::fixed_pressure:
+      return GhostRelation{
+          .coefficient = 1.0,
+          .constant = 0.0,
+      };
+    case PhysicalBoundaryType::periodic:
+      return GhostRelation{};
+  }
+
+  return GhostRelation{};
 }
 
 void require_same_layout(const StructuredField& left,
@@ -515,13 +542,31 @@ void solve_component_sweep(const FaceField& input,
     case Axis::x:
       for(int k = active.k_begin; k < active.k_end; ++k) {
         for(int j = active.j_begin; j < active.j_end; ++j) {
+          std::fill(diagonal.begin(), diagonal.end(), 1.0 + 2.0 * beta);
           for(int i = begin; i < end; ++i) {
             const int local = i - begin;
             rhs[static_cast<std::size_t>(local)] = input(i, j, k);
           }
 
-          rhs[0] += beta * input(begin - 1, j, k);
-          rhs[static_cast<std::size_t>(unknowns - 1)] += beta * input(end, j, k);
+          if(input.normal_axis() == axis && is_dirichlet_velocity_boundary(boundary_conditions[lower_face(axis)])) {
+            rhs[0] += beta * component_value(boundary_conditions[lower_face(axis)], axis);
+          } else {
+            const GhostRelation relation =
+                tangential_ghost_relation(boundary_conditions[lower_face(axis)], input.normal_axis());
+            diagonal[0] -= beta * relation.coefficient;
+            rhs[0] += beta * relation.constant;
+          }
+
+          if(input.normal_axis() == axis && is_dirichlet_velocity_boundary(boundary_conditions[upper_face(axis)])) {
+            rhs[static_cast<std::size_t>(unknowns - 1)] +=
+                beta * component_value(boundary_conditions[upper_face(axis)], axis);
+          } else {
+            const GhostRelation relation =
+                tangential_ghost_relation(boundary_conditions[upper_face(axis)], input.normal_axis());
+            diagonal[static_cast<std::size_t>(unknowns - 1)] -= beta * relation.coefficient;
+            rhs[static_cast<std::size_t>(unknowns - 1)] += beta * relation.constant;
+          }
+
           solve_tridiagonal(lower, diagonal, upper, rhs, solution);
 
           for(int i = begin; i < end; ++i) {
@@ -534,13 +579,31 @@ void solve_component_sweep(const FaceField& input,
     case Axis::y:
       for(int k = active.k_begin; k < active.k_end; ++k) {
         for(int i = active.i_begin; i < active.i_end; ++i) {
+          std::fill(diagonal.begin(), diagonal.end(), 1.0 + 2.0 * beta);
           for(int j = begin; j < end; ++j) {
             const int local = j - begin;
             rhs[static_cast<std::size_t>(local)] = input(i, j, k);
           }
 
-          rhs[0] += beta * input(i, begin - 1, k);
-          rhs[static_cast<std::size_t>(unknowns - 1)] += beta * input(i, end, k);
+          if(input.normal_axis() == axis && is_dirichlet_velocity_boundary(boundary_conditions[lower_face(axis)])) {
+            rhs[0] += beta * component_value(boundary_conditions[lower_face(axis)], axis);
+          } else {
+            const GhostRelation relation =
+                tangential_ghost_relation(boundary_conditions[lower_face(axis)], input.normal_axis());
+            diagonal[0] -= beta * relation.coefficient;
+            rhs[0] += beta * relation.constant;
+          }
+
+          if(input.normal_axis() == axis && is_dirichlet_velocity_boundary(boundary_conditions[upper_face(axis)])) {
+            rhs[static_cast<std::size_t>(unknowns - 1)] +=
+                beta * component_value(boundary_conditions[upper_face(axis)], axis);
+          } else {
+            const GhostRelation relation =
+                tangential_ghost_relation(boundary_conditions[upper_face(axis)], input.normal_axis());
+            diagonal[static_cast<std::size_t>(unknowns - 1)] -= beta * relation.coefficient;
+            rhs[static_cast<std::size_t>(unknowns - 1)] += beta * relation.constant;
+          }
+
           solve_tridiagonal(lower, diagonal, upper, rhs, solution);
 
           for(int j = begin; j < end; ++j) {
@@ -553,13 +616,31 @@ void solve_component_sweep(const FaceField& input,
     case Axis::z:
       for(int j = active.j_begin; j < active.j_end; ++j) {
         for(int i = active.i_begin; i < active.i_end; ++i) {
+          std::fill(diagonal.begin(), diagonal.end(), 1.0 + 2.0 * beta);
           for(int k = begin; k < end; ++k) {
             const int local = k - begin;
             rhs[static_cast<std::size_t>(local)] = input(i, j, k);
           }
 
-          rhs[0] += beta * input(i, j, begin - 1);
-          rhs[static_cast<std::size_t>(unknowns - 1)] += beta * input(i, j, end);
+          if(input.normal_axis() == axis && is_dirichlet_velocity_boundary(boundary_conditions[lower_face(axis)])) {
+            rhs[0] += beta * component_value(boundary_conditions[lower_face(axis)], axis);
+          } else {
+            const GhostRelation relation =
+                tangential_ghost_relation(boundary_conditions[lower_face(axis)], input.normal_axis());
+            diagonal[0] -= beta * relation.coefficient;
+            rhs[0] += beta * relation.constant;
+          }
+
+          if(input.normal_axis() == axis && is_dirichlet_velocity_boundary(boundary_conditions[upper_face(axis)])) {
+            rhs[static_cast<std::size_t>(unknowns - 1)] +=
+                beta * component_value(boundary_conditions[upper_face(axis)], axis);
+          } else {
+            const GhostRelation relation =
+                tangential_ghost_relation(boundary_conditions[upper_face(axis)], input.normal_axis());
+            diagonal[static_cast<std::size_t>(unknowns - 1)] -= beta * relation.coefficient;
+            rhs[static_cast<std::size_t>(unknowns - 1)] += beta * relation.constant;
+          }
+
           solve_tridiagonal(lower, diagonal, upper, rhs, solution);
 
           for(int k = begin; k < end; ++k) {
@@ -638,7 +719,7 @@ std::string to_string(const PressureBoundaryType type) {
   return "unknown";
 }
 
-PressureBoundarySet derive_pressure_boundary_conditions(
+PressureBoundarySet derive_pressure_correction_boundary_conditions(
     const BoundaryConditionSet& boundary_conditions) {
   PressureBoundarySet mapped;
 
@@ -651,11 +732,11 @@ PressureBoundarySet derive_pressure_boundary_conditions(
       case PhysicalBoundaryType::prescribed_velocity:
       case PhysicalBoundaryType::symmetry:
         destination.type = PressureBoundaryType::neumann;
-        destination.gradient = source.pressure_gradient;
+        destination.gradient = 0.0;
         break;
       case PhysicalBoundaryType::fixed_pressure:
         destination.type = PressureBoundaryType::dirichlet;
-        destination.value = source.pressure;
+        destination.value = 0.0;
         break;
       case PhysicalBoundaryType::periodic:
         destination.type = PressureBoundaryType::periodic;
@@ -729,7 +810,7 @@ void build_pressure_rhs(const VelocityField& predicted_velocity,
 }
 
 void correct_velocity(const VelocityField& predicted_velocity,
-                      const PressureField& pressure,
+                      const PressureField& pressure_correction,
                       const BoundaryConditionSet& boundary_conditions,
                       const ProjectionOptions& options,
                       VelocityField& corrected_velocity) {
@@ -744,8 +825,8 @@ void correct_velocity(const VelocityField& predicted_velocity,
   require_same_layout(predicted_velocity.y, corrected_velocity.y, "correct_velocity");
   require_same_layout(predicted_velocity.z, corrected_velocity.z, "correct_velocity");
 
-  VelocityField pressure_gradient{pressure.layout().grid()};
-  operators::compute_gradient(pressure, pressure_gradient);
+  VelocityField pressure_gradient{pressure_correction.layout().grid()};
+  operators::compute_gradient(pressure_correction, pressure_gradient);
 
   corrected_velocity = predicted_velocity;
   axpy_active(corrected_velocity.x, pressure_gradient.x, -options.dt / options.density);
@@ -757,13 +838,13 @@ void correct_velocity(const VelocityField& predicted_velocity,
 ProjectionDiagnostics project_velocity(const VelocityField& predicted_velocity,
                                        const BoundaryConditionSet& boundary_conditions,
                                        const ProjectionOptions& options,
-                                       PressureField& pressure,
+                                       PressureField& pressure_correction,
                                        VelocityField& corrected_velocity,
                                        ScalarField* pressure_rhs) {
   ProjectionDiagnostics diagnostics;
-  const Grid& grid = pressure.layout().grid();
+  const Grid& grid = pressure_correction.layout().grid();
   const PressureBoundarySet pressure_boundary_conditions =
-      derive_pressure_boundary_conditions(boundary_conditions);
+      derive_pressure_correction_boundary_conditions(boundary_conditions);
   ScalarField rhs{grid};
   ScalarField divergence{grid};
   VelocityField working = predicted_velocity;
@@ -774,13 +855,14 @@ ProjectionDiagnostics project_velocity(const VelocityField& predicted_velocity,
 
   build_pressure_rhs(working, boundary_conditions, options, rhs);
   diagnostics.rhs_l2 = active_l2_norm(rhs);
-  diagnostics.pressure_solve =
-      linsolve::solve_pressure_poisson(rhs, pressure_boundary_conditions, options, pressure);
-  correct_velocity(working, pressure, boundary_conditions, options, corrected_velocity);
+  diagnostics.pressure_solve = linsolve::solve_pressure_poisson(
+      rhs, pressure_boundary_conditions, options, pressure_correction);
+  correct_velocity(
+      working, pressure_correction, boundary_conditions, options, corrected_velocity);
 
   operators::compute_divergence(corrected_velocity, divergence);
   diagnostics.divergence_l2_after = active_l2_norm(divergence);
-  diagnostics.pressure_mean = active_mean(pressure);
+  diagnostics.pressure_mean = active_mean(pressure_correction);
 
   if(pressure_rhs != nullptr) {
     copy_active(rhs, *pressure_rhs);

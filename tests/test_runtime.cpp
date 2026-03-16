@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 namespace {
 
@@ -272,6 +273,227 @@ void scale_velocity_active(solver::VelocityField& field, const double scale) {
   scale_active(field.z, scale);
 }
 
+bool is_fixed_velocity_boundary(const solver::BoundaryCondition& condition) {
+  return condition.type == solver::PhysicalBoundaryType::no_slip_wall ||
+         condition.type == solver::PhysicalBoundaryType::prescribed_velocity ||
+         condition.type == solver::PhysicalBoundaryType::symmetry;
+}
+
+void copy_storage_values(const solver::StructuredField& source, solver::StructuredField& destination) {
+  const solver::Extent3D storage = source.layout().storage_extent();
+  for(int k = 0; k < storage.nz; ++k) {
+    for(int j = 0; j < storage.ny; ++j) {
+      for(int i = 0; i < storage.nx; ++i) {
+        destination(i, j, k) = source(i, j, k);
+      }
+    }
+  }
+}
+
+void apply_component_boundary_conditions(const solver::BoundaryConditionSet& boundary_conditions,
+                                         solver::FaceField& field) {
+  solver::VelocityField velocity{field.layout().grid()};
+  velocity.fill(0.0);
+
+  switch(field.normal_axis()) {
+    case solver::Axis::x:
+      copy_storage_values(field, velocity.x);
+      break;
+    case solver::Axis::y:
+      copy_storage_values(field, velocity.y);
+      break;
+    case solver::Axis::z:
+      copy_storage_values(field, velocity.z);
+      break;
+  }
+
+  solver::apply_velocity_boundary_conditions(boundary_conditions, velocity);
+
+  switch(field.normal_axis()) {
+    case solver::Axis::x:
+      copy_storage_values(velocity.x, field);
+      break;
+    case solver::Axis::y:
+      copy_storage_values(velocity.y, field);
+      break;
+    case solver::Axis::z:
+      copy_storage_values(velocity.z, field);
+      break;
+  }
+}
+
+std::vector<solver::Index3D> collect_factorized_unknowns(const solver::FaceField& field,
+                                                         const solver::BoundaryConditionSet& boundary_conditions) {
+  solver::IndexRange3D active = field.layout().active_range();
+
+  if(field.normal_axis() == solver::Axis::x) {
+    if(is_fixed_velocity_boundary(boundary_conditions[solver::BoundaryFace::x_min])) {
+      ++active.i_begin;
+    }
+    if(is_fixed_velocity_boundary(boundary_conditions[solver::BoundaryFace::x_max])) {
+      --active.i_end;
+    }
+  } else if(field.normal_axis() == solver::Axis::y) {
+    if(is_fixed_velocity_boundary(boundary_conditions[solver::BoundaryFace::y_min])) {
+      ++active.j_begin;
+    }
+    if(is_fixed_velocity_boundary(boundary_conditions[solver::BoundaryFace::y_max])) {
+      --active.j_end;
+    }
+  } else {
+    if(is_fixed_velocity_boundary(boundary_conditions[solver::BoundaryFace::z_min])) {
+      ++active.k_begin;
+    }
+    if(is_fixed_velocity_boundary(boundary_conditions[solver::BoundaryFace::z_max])) {
+      --active.k_end;
+    }
+  }
+
+  std::vector<solver::Index3D> unknowns;
+  unknowns.reserve(static_cast<std::size_t>(active.extent().cell_count()));
+  for(int k = active.k_begin; k < active.k_end; ++k) {
+    for(int j = active.j_begin; j < active.j_end; ++j) {
+      for(int i = active.i_begin; i < active.i_end; ++i) {
+        unknowns.push_back(solver::Index3D{i, j, k});
+      }
+    }
+  }
+  return unknowns;
+}
+
+std::vector<double> extract_unknown_values(const solver::FaceField& field,
+                                           const std::vector<solver::Index3D>& unknowns) {
+  std::vector<double> values;
+  values.reserve(unknowns.size());
+  for(const solver::Index3D index : unknowns) {
+    values.push_back(field(index.i, index.j, index.k));
+  }
+  return values;
+}
+
+double second_derivative_axis(const solver::StructuredField& input,
+                              const int i,
+                              const int j,
+                              const int k,
+                              const solver::Axis axis) {
+  const double spacing = input.layout().grid().spacing(axis);
+  const double inverse_spacing_squared = 1.0 / (spacing * spacing);
+
+  switch(axis) {
+    case solver::Axis::x:
+      return (input(i + 1, j, k) - 2.0 * input(i, j, k) + input(i - 1, j, k)) *
+             inverse_spacing_squared;
+    case solver::Axis::y:
+      return (input(i, j + 1, k) - 2.0 * input(i, j, k) + input(i, j - 1, k)) *
+             inverse_spacing_squared;
+    case solver::Axis::z:
+      return (input(i, j, k + 1) - 2.0 * input(i, j, k) + input(i, j, k - 1)) *
+             inverse_spacing_squared;
+  }
+
+  return 0.0;
+}
+
+void apply_directional_helmholtz_operator(const solver::FaceField& input,
+                                          const double alpha,
+                                          const solver::Axis axis,
+                                          solver::FaceField& output) {
+  copy_storage_values(input, output);
+  const solver::IndexRange3D active = input.layout().active_range();
+
+  for(int k = active.k_begin; k < active.k_end; ++k) {
+    for(int j = active.j_begin; j < active.j_end; ++j) {
+      for(int i = active.i_begin; i < active.i_end; ++i) {
+        output(i, j, k) = input(i, j, k) - alpha * second_derivative_axis(input, i, j, k, axis);
+      }
+    }
+  }
+}
+
+solver::FaceField apply_factorized_operator(const solver::FaceField& input,
+                                            const solver::BoundaryConditionSet& boundary_conditions,
+                                            const double alpha) {
+  solver::FaceField stage0(input.normal_axis(), input.layout().grid());
+  solver::FaceField stage1(input.normal_axis(), input.layout().grid());
+  solver::FaceField stage2(input.normal_axis(), input.layout().grid());
+  solver::FaceField stage3(input.normal_axis(), input.layout().grid());
+
+  copy_storage_values(input, stage0);
+  apply_component_boundary_conditions(boundary_conditions, stage0);
+  apply_directional_helmholtz_operator(stage0, alpha, solver::Axis::x, stage1);
+  apply_component_boundary_conditions(boundary_conditions, stage1);
+  apply_directional_helmholtz_operator(stage1, alpha, solver::Axis::y, stage2);
+  apply_component_boundary_conditions(boundary_conditions, stage2);
+  apply_directional_helmholtz_operator(stage2, alpha, solver::Axis::z, stage3);
+  apply_component_boundary_conditions(boundary_conditions, stage3);
+  return stage3;
+}
+
+std::vector<double> solve_dense_linear_system(std::vector<std::vector<double>> matrix,
+                                              std::vector<double> rhs) {
+  const std::size_t n = rhs.size();
+  require(matrix.size() == n, "dense solve expects a square matrix");
+
+  for(std::size_t pivot = 0; pivot < n; ++pivot) {
+    std::size_t best = pivot;
+    double max_value = std::abs(matrix[pivot][pivot]);
+    for(std::size_t row = pivot + 1; row < n; ++row) {
+      const double candidate = std::abs(matrix[row][pivot]);
+      if(candidate > max_value) {
+        max_value = candidate;
+        best = row;
+      }
+    }
+
+    require(max_value > 1.0e-14, "dense solve encountered a singular matrix");
+    if(best != pivot) {
+      std::swap(matrix[pivot], matrix[best]);
+      std::swap(rhs[pivot], rhs[best]);
+    }
+
+    const double diagonal = matrix[pivot][pivot];
+    for(std::size_t column = pivot; column < n; ++column) {
+      matrix[pivot][column] /= diagonal;
+    }
+    rhs[pivot] /= diagonal;
+
+    for(std::size_t row = 0; row < n; ++row) {
+      if(row == pivot) {
+        continue;
+      }
+
+      const double factor = matrix[row][pivot];
+      if(std::abs(factor) <= 1.0e-14) {
+        continue;
+      }
+      for(std::size_t column = pivot; column < n; ++column) {
+        matrix[row][column] -= factor * matrix[pivot][column];
+      }
+      rhs[row] -= factor * rhs[pivot];
+    }
+  }
+
+  return rhs;
+}
+
+double mixed_second_derivative_2d(const solver::StructuredField& input,
+                                  const int i,
+                                  const int j,
+                                  const int k) {
+  const double dy = input.layout().grid().dy;
+  const double dy_squared = dy * dy;
+  const double dyy_im1 =
+      (input(i - 1, j + 1, k) - 2.0 * input(i - 1, j, k) + input(i - 1, j - 1, k)) / dy_squared;
+  const double dyy_i =
+      (input(i, j + 1, k) - 2.0 * input(i, j, k) + input(i, j - 1, k)) / dy_squared;
+  const double dyy_ip1 =
+      (input(i + 1, j + 1, k) - 2.0 * input(i + 1, j, k) + input(i + 1, j - 1, k)) / dy_squared;
+
+  const double dx = input.layout().grid().dx;
+  const double inverse_dx_squared = 1.0 / (dx * dx);
+  return (dyy_ip1 - 2.0 * dyy_i + dyy_im1) * inverse_dx_squared;
+}
+
 double velocity_max_abs(const solver::VelocityField& velocity) {
   return std::max({max_abs_active(velocity.x), max_abs_active(velocity.y), max_abs_active(velocity.z)});
 }
@@ -438,7 +660,7 @@ void test_projection_boundary_mapping() {
   boundary_conditions[solver::BoundaryFace::z_max].type = solver::PhysicalBoundaryType::periodic;
 
   const solver::PressureBoundarySet mapped =
-      solver::derive_pressure_boundary_conditions(boundary_conditions);
+      solver::derive_pressure_correction_boundary_conditions(boundary_conditions);
 
   require(mapped[solver::BoundaryFace::x_min].type == solver::PressureBoundaryType::neumann,
           "no-slip wall should map to pressure Neumann");
@@ -448,8 +670,8 @@ void test_projection_boundary_mapping() {
           "symmetry should map to pressure Neumann");
   require(mapped[solver::BoundaryFace::y_max].type == solver::PressureBoundaryType::dirichlet,
           "fixed pressure should map to pressure Dirichlet");
-  require(std::abs(mapped[solver::BoundaryFace::y_max].value - 1.25) < 1.0e-12,
-          "fixed pressure value did not carry through the mapping");
+  require(std::abs(mapped[solver::BoundaryFace::y_max].value) < 1.0e-12,
+          "pressure correction Dirichlet boundary should be homogeneous");
   require(mapped[solver::BoundaryFace::z_min].type == solver::PressureBoundaryType::periodic,
           "periodic boundary should map to periodic pressure");
   require(mapped[solver::BoundaryFace::z_max].type == solver::PressureBoundaryType::periodic,
@@ -470,6 +692,254 @@ void test_predictor_adi_preserves_quiescent_state() {
 
   require(diagnostics.line_solves > 0, "ADI predictor should perform deterministic line solves");
   require(velocity_max_abs(predicted) <= 1.0e-12, "quiescent predictor state should remain zero");
+}
+
+void test_lid_driven_cavity_total_pressure_boundary_conditions() {
+  const solver::Grid grid{4, 3, 1, 0.25, 1.0 / 3.0, 1.0, 1};
+  solver::PressureField pressure_total{grid};
+  solver::VelocityField diffusion{grid};
+  pressure_total.fill(-99.0);
+  diffusion.fill(0.0);
+
+  fill_storage(pressure_total, [](const double x, const double y, double) {
+    return 1.0 + 2.0 * x - 3.0 * y;
+  });
+
+  const solver::IndexRange3D pressure_active = pressure_total.layout().active_range();
+  const solver::IndexRange3D u_active = diffusion.x.layout().active_range();
+  const solver::IndexRange3D v_active = diffusion.y.layout().active_range();
+
+  for(int k = u_active.k_begin; k < u_active.k_end; ++k) {
+    for(int j = u_active.j_begin; j < u_active.j_end; ++j) {
+      diffusion.x(u_active.i_begin, j, k) = 0.5 + 0.1 * static_cast<double>(j);
+      diffusion.x(u_active.i_end - 1, j, k) = -0.25 + 0.05 * static_cast<double>(j);
+    }
+  }
+  for(int k = v_active.k_begin; k < v_active.k_end; ++k) {
+    for(int i = v_active.i_begin; i < v_active.i_end; ++i) {
+      diffusion.y(i, v_active.j_begin, k) = -0.4 + 0.08 * static_cast<double>(i);
+      diffusion.y(i, v_active.j_end - 1, k) = 0.3 - 0.07 * static_cast<double>(i);
+    }
+  }
+
+  solver::detail::apply_lid_driven_cavity_total_pressure_boundary_conditions(diffusion, pressure_total);
+
+  const solver::IndexRange3D x_min_ghost = pressure_total.layout().ghost_range(solver::BoundaryFace::x_min);
+  const solver::IndexRange3D x_max_ghost = pressure_total.layout().ghost_range(solver::BoundaryFace::x_max);
+  const solver::IndexRange3D y_min_ghost = pressure_total.layout().ghost_range(solver::BoundaryFace::y_min);
+  const solver::IndexRange3D y_max_ghost = pressure_total.layout().ghost_range(solver::BoundaryFace::y_max);
+  const solver::IndexRange3D z_min_ghost = pressure_total.layout().ghost_range(solver::BoundaryFace::z_min);
+  const solver::IndexRange3D z_max_ghost = pressure_total.layout().ghost_range(solver::BoundaryFace::z_max);
+
+  for(int k = pressure_active.k_begin; k < pressure_active.k_end; ++k) {
+    for(int j = pressure_active.j_begin; j < pressure_active.j_end; ++j) {
+      const double x_min_expected =
+          pressure_total(pressure_active.i_begin, j, k) -
+          diffusion.x(u_active.i_begin, j, k) * grid.dx;
+      const double x_max_expected =
+          pressure_total(pressure_active.i_end - 1, j, k) +
+          diffusion.x(u_active.i_end - 1, j, k) * grid.dx;
+      require(std::abs(pressure_total(x_min_ghost.i_begin, j, k) - x_min_expected) <= 1.0e-12,
+              "x_min total-pressure ghost fill is inconsistent");
+      require(std::abs(pressure_total(x_max_ghost.i_begin, j, k) - x_max_expected) <= 1.0e-12,
+              "x_max total-pressure ghost fill is inconsistent");
+    }
+  }
+
+  for(int k = pressure_active.k_begin; k < pressure_active.k_end; ++k) {
+    for(int i = pressure_active.i_begin; i < pressure_active.i_end; ++i) {
+      const double y_min_expected =
+          pressure_total(i, pressure_active.j_begin, k) -
+          diffusion.y(i, v_active.j_begin, k) * grid.dy;
+      const double y_max_expected =
+          pressure_total(i, pressure_active.j_end - 1, k) +
+          diffusion.y(i, v_active.j_end - 1, k) * grid.dy;
+      require(std::abs(pressure_total(i, y_min_ghost.j_begin, k) - y_min_expected) <= 1.0e-12,
+              "y_min total-pressure ghost fill is inconsistent");
+      require(std::abs(pressure_total(i, y_max_ghost.j_begin, k) - y_max_expected) <= 1.0e-12,
+              "y_max total-pressure ghost fill is inconsistent");
+    }
+  }
+
+  for(int j = pressure_active.j_begin; j < pressure_active.j_end; ++j) {
+    for(int i = pressure_active.i_begin; i < pressure_active.i_end; ++i) {
+      require(std::abs(pressure_total(i, j, z_min_ghost.k_begin) -
+                       pressure_total(i, j, pressure_active.k_begin)) <= 1.0e-12,
+              "z_min total-pressure ghost fill should be zero-gradient");
+      require(std::abs(pressure_total(i, j, z_max_ghost.k_begin) -
+                       pressure_total(i, j, pressure_active.k_end - 1)) <= 1.0e-12,
+              "z_max total-pressure ghost fill should be zero-gradient");
+    }
+  }
+}
+
+void test_predictor_adi_matches_factorized_dense_reference() {
+  const solver::Grid grid{4, 3, 1, 0.25, 1.0 / 3.0, 1.0, 1};
+  solver::BoundaryConditionSet boundary_conditions =
+      solver::BoundaryConditionSet::all(solver::PhysicalBoundaryType::no_slip_wall);
+  boundary_conditions[solver::BoundaryFace::z_min].type = solver::PhysicalBoundaryType::symmetry;
+  boundary_conditions[solver::BoundaryFace::z_max].type = solver::PhysicalBoundaryType::symmetry;
+
+  solver::VelocityField rhs{grid};
+  rhs.fill(0.0);
+  fill_storage(rhs.x, [](const double x, const double y, double) {
+    return 0.2 + 0.4 * x - 0.3 * y + 0.1 * x * y;
+  });
+  solver::apply_velocity_boundary_conditions(boundary_conditions, rhs);
+
+  const std::vector<solver::Index3D> unknowns = collect_factorized_unknowns(rhs.x, boundary_conditions);
+  require(!unknowns.empty(), "factorized reference test requires interior unknowns");
+
+  const double alpha = 0.0375;
+  std::vector<std::vector<double>> matrix(unknowns.size(), std::vector<double>(unknowns.size(), 0.0));
+  for(std::size_t column = 0; column < unknowns.size(); ++column) {
+    solver::FaceField basis(solver::Axis::x, grid);
+    basis.fill(0.0);
+    basis(unknowns[column].i, unknowns[column].j, unknowns[column].k) = 1.0;
+    const solver::FaceField image = apply_factorized_operator(basis, boundary_conditions, alpha);
+    const std::vector<double> values = extract_unknown_values(image, unknowns);
+    for(std::size_t row = 0; row < unknowns.size(); ++row) {
+      matrix[row][column] = values[row];
+    }
+  }
+
+  const std::vector<double> rhs_vector = extract_unknown_values(rhs.x, unknowns);
+  const std::vector<double> dense_solution = solve_dense_linear_system(matrix, rhs_vector);
+
+  solver::VelocityField predicted{grid};
+  predicted.fill(0.0);
+  const solver::HelmholtzDiagnostics diagnostics =
+      solver::solve_predictor_adi(rhs, alpha, boundary_conditions, predicted);
+  const std::vector<double> adi_solution = extract_unknown_values(predicted.x, unknowns);
+
+  require(diagnostics.line_solves > 0, "factorized predictor should perform line solves");
+  double max_error = 0.0;
+  for(std::size_t index = 0; index < dense_solution.size(); ++index) {
+    max_error = std::max(max_error, std::abs(adi_solution[index] - dense_solution[index]));
+  }
+  require(max_error <= 1.0e-10,
+          "ADI predictor drifted from the dense factorized reference solve: max_error=" +
+              std::to_string(max_error));
+}
+
+void test_lid_driven_cavity_predictor_rhs_matches_manual_formula() {
+  solver::LidDrivenCavityConfig config = solver::default_lid_driven_cavity_config();
+  config.nx = 8;
+  config.ny = 6;
+  const solver::Grid grid{config.nx,
+                          config.ny,
+                          1,
+                          1.0 / static_cast<double>(config.nx),
+                          1.0 / static_cast<double>(config.ny),
+                          1.0,
+                          1};
+  const solver::BoundaryConditionSet boundary_conditions =
+      solver::make_lid_driven_cavity_boundary_conditions(config);
+  const double viscosity = config.lid_velocity / config.reynolds;
+  const double dt = 0.4 * std::min(grid.dx, grid.dy);
+  const double alpha = 0.5 * viscosity * dt;
+
+  solver::VelocityField current_velocity{grid};
+  solver::VelocityField advection_previous{grid};
+  solver::VelocityField advection_current{grid};
+  solver::VelocityField diffusion{grid};
+  solver::VelocityField pressure_gradient{grid};
+  solver::VelocityField factorized_correction{grid};
+  solver::VelocityField predictor_rhs{grid};
+  solver::VelocityField expected_advection{grid};
+  solver::VelocityField expected_diffusion{grid};
+  solver::VelocityField expected_pressure_gradient{grid};
+  solver::VelocityField expected_rhs{grid};
+  solver::PressureField pressure_total{grid};
+
+  fill_storage(current_velocity.x, [](const double x, const double y, double) {
+    return std::sin(pi() * x) * std::sin(pi() * y);
+  });
+  fill_storage(current_velocity.y, [](const double x, const double y, double) {
+    return 0.25 * std::cos(pi() * x) * std::sin(pi() * y);
+  });
+  fill_storage(current_velocity.z, [](double, double, double) {
+    return 0.0;
+  });
+  fill_storage(advection_previous.x, [](const double x, const double y, double) {
+    return 0.1 + x - 0.5 * y;
+  });
+  fill_storage(advection_previous.y, [](const double x, const double y, double) {
+    return -0.2 + 0.3 * x + 0.4 * y;
+  });
+  fill_storage(advection_previous.z, [](double, double, double) {
+    return 0.0;
+  });
+  fill_storage(pressure_total, [](const double x, const double y, double) {
+    return 0.3 * x * x - 0.2 * y + 0.1 * x * y;
+  });
+
+  solver::apply_velocity_boundary_conditions(boundary_conditions, current_velocity);
+  solver::compute_diffusion_term(current_velocity, viscosity, expected_diffusion);
+  solver::detail::apply_lid_driven_cavity_total_pressure_boundary_conditions(expected_diffusion,
+                                                                             pressure_total);
+  solver::compute_advection_term(current_velocity, config.advection, expected_advection);
+  solver::operators::compute_gradient(pressure_total, expected_pressure_gradient);
+  expected_rhs = current_velocity;
+  axpy_velocity(expected_rhs, expected_pressure_gradient, -dt);
+  axpy_velocity(expected_rhs, expected_diffusion, 0.5 * dt);
+  axpy_velocity(expected_rhs, expected_advection, -1.5 * dt);
+  axpy_velocity(expected_rhs, advection_previous, 0.5 * dt);
+
+  solver::VelocityField expected_factorized_correction{grid};
+  expected_factorized_correction.fill(0.0);
+  for(int k = current_velocity.x.layout().active_range().k_begin;
+      k < current_velocity.x.layout().active_range().k_end;
+      ++k) {
+    for(int j = current_velocity.x.layout().active_range().j_begin;
+        j < current_velocity.x.layout().active_range().j_end;
+        ++j) {
+      for(int i = current_velocity.x.layout().active_range().i_begin;
+          i < current_velocity.x.layout().active_range().i_end;
+          ++i) {
+        expected_factorized_correction.x(i, j, k) = mixed_second_derivative_2d(current_velocity.x, i, j, k);
+      }
+    }
+  }
+  for(int k = current_velocity.y.layout().active_range().k_begin;
+      k < current_velocity.y.layout().active_range().k_end;
+      ++k) {
+    for(int j = current_velocity.y.layout().active_range().j_begin;
+        j < current_velocity.y.layout().active_range().j_end;
+        ++j) {
+      for(int i = current_velocity.y.layout().active_range().i_begin;
+          i < current_velocity.y.layout().active_range().i_end;
+          ++i) {
+        expected_factorized_correction.y(i, j, k) = mixed_second_derivative_2d(current_velocity.y, i, j, k);
+      }
+    }
+  }
+  axpy_velocity(expected_rhs, expected_factorized_correction, alpha * alpha);
+
+  solver::detail::assemble_lid_driven_cavity_predictor_rhs(current_velocity,
+                                                           pressure_total,
+                                                           &advection_previous,
+                                                           config.advection,
+                                                           viscosity,
+                                                           dt,
+                                                           advection_current,
+                                                           diffusion,
+                                                           pressure_gradient,
+                                                           factorized_correction,
+                                                           predictor_rhs);
+
+  require(active_l2_difference(advection_current.x, expected_advection.x) <= 1.0e-12,
+          "predictor assembly should return the current advection term");
+  require(active_l2_difference(diffusion.x, expected_diffusion.x) <= 1.0e-12,
+          "predictor assembly should return the current diffusion term");
+  require(active_l2_difference(pressure_gradient.x, expected_pressure_gradient.x) <= 1.0e-12,
+          "predictor assembly should use the total-pressure gradient");
+  require(max_abs_active(expected_factorized_correction.x) > 1.0e-4,
+          "predictor correction test needs a nontrivial factorization correction");
+  require(active_l2_difference(predictor_rhs.x, expected_rhs.x) <= 1.0e-12,
+          "predictor RHS x component missed the factorized correction term");
+  require(active_l2_difference(predictor_rhs.y, expected_rhs.y) <= 1.0e-12,
+          "predictor RHS y component missed the factorized correction term");
 }
 
 void test_poisson_mgpcg_discrete_dirichlet_recovery() {
@@ -828,7 +1298,7 @@ void test_pure_neumann_projection_recovers_zero_mean_pressure() {
       .poisson_tolerance = 1.0e-12,
   };
   const solver::PressureBoundarySet pressure_boundaries =
-      solver::derive_pressure_boundary_conditions(boundary_conditions);
+      solver::derive_pressure_correction_boundary_conditions(boundary_conditions);
 
   solver::PressureField expected_pressure{grid};
   fill_storage(expected_pressure, [](const double x, const double y, double) {
@@ -932,36 +1402,47 @@ void test_lid_driven_cavity_smoke_run() {
 }
 
 void test_lid_driven_cavity_reference_validation_gate() {
-  const solver::LidDrivenCavityReference reference = solver::ghia_re100_reference();
+  const solver::LidDrivenCavityReference reference = solver::re100_centerline_reference_envelope();
+  const solver::LidDrivenCavityReferencePoint& u_top = reference.points[0];
+  const solver::LidDrivenCavityReferencePoint& u_mid = reference.points[1];
+  const solver::LidDrivenCavityReferencePoint& v_left = reference.points[2];
+  const solver::LidDrivenCavityReferencePoint& v_right = reference.points[3];
+
+  const double u_slope = (u_top.value - u_mid.value) / (u_top.coordinate - u_mid.coordinate);
+  const double u_intercept = u_top.value - u_slope * u_top.coordinate;
+  const double v_slope = (v_right.value - v_left.value) / (v_right.coordinate - v_left.coordinate);
+  const double v_intercept = v_left.value - v_slope * v_left.coordinate;
+
   solver::LidDrivenCavityResult passing{};
-  passing.extrema.u_vertical_max = 0.0;
-  passing.extrema.u_vertical_min = 0.0;
-  passing.extrema.v_horizontal_max = 0.0;
-  passing.extrema.v_horizontal_min = 0.0;
-  passing.u_vertical_centerline.coordinate = {
-      0.4000, reference.u_vertical_min_y, 0.5000, reference.u_vertical_max_y, 0.9900};
-  passing.u_vertical_centerline.value = {
-      -0.1800, reference.u_vertical_min, -0.20581, reference.u_vertical_max, 0.9000};
-  passing.v_horizontal_centerline.coordinate = {
-      0.2000, reference.v_horizontal_max_x, 0.5000, reference.v_horizontal_min_x, 0.9000};
-  passing.v_horizontal_centerline.value = {
-      0.1700, reference.v_horizontal_max, 0.05454, reference.v_horizontal_min, -0.1800};
+  passing.u_vertical_centerline.coordinate = {0.20, 0.40, 0.60, 0.80, 0.99};
+  for(const double coordinate : passing.u_vertical_centerline.coordinate) {
+    passing.u_vertical_centerline.value.push_back(u_slope * coordinate + u_intercept);
+  }
+  passing.v_horizontal_centerline.coordinate = {0.10, 0.30, 0.55, 0.72, 0.92};
+  for(const double coordinate : passing.v_horizontal_centerline.coordinate) {
+    passing.v_horizontal_centerline.value.push_back(v_slope * coordinate + v_intercept);
+  }
   passing.final_step.divergence_l2 = 5.0e-11;
 
   const solver::LidDrivenCavityValidation validation =
       solver::validate_lid_driven_cavity_re100(passing);
   require(validation.pass, "reference-matching cavity result should pass validation");
   require(validation.reference_dataset == reference.dataset, "wrong reference dataset label");
-  require(std::abs(validation.u_vertical_max_sample - reference.u_vertical_max) <= 1.0e-12,
-          "validation should sample the vertical-max reference point");
-  require(std::abs(validation.v_horizontal_min_sample - reference.v_horizontal_min) <= 1.0e-12,
-          "validation should sample the horizontal-min reference point");
+  require(validation.max_relative_error <= 1.0e-12,
+          "validation should reproduce the named reference sample points");
+  require(validation.points[0].label == u_top.label, "validation point labels drifted");
+  require(std::abs(validation.points[3].sample_value - v_right.value) <= 1.0e-12,
+          "validation should sample the horizontal-right reference point");
 
   solver::LidDrivenCavityResult failing = passing;
-  failing.v_horizontal_centerline.value[1] *= 0.97;
+  for(double& value : failing.v_horizontal_centerline.value) {
+    value *= 0.97;
+  }
   const solver::LidDrivenCavityValidation failed_validation =
       solver::validate_lid_driven_cavity_re100(failing);
-  require(!failed_validation.pass, "3 percent extrema drift should fail the 2 percent gate");
+  require(!failed_validation.pass, "3 percent sample drift should fail the 2 percent gate");
+  require(failed_validation.max_relative_error >= 0.03 - 1.0e-12,
+          "validation should report the largest sample-point drift");
 }
 
 }  // namespace
@@ -980,6 +1461,9 @@ int main() {
     test_advection_options_and_cfl_diagnostic();
     test_projection_boundary_mapping();
     test_predictor_adi_preserves_quiescent_state();
+    test_lid_driven_cavity_total_pressure_boundary_conditions();
+    test_predictor_adi_matches_factorized_dense_reference();
+    test_lid_driven_cavity_predictor_rhs_matches_manual_formula();
     test_poisson_mgpcg_discrete_dirichlet_recovery();
     test_poisson_mgpcg_pure_neumann_zero_mean_recovery();
     test_manufactured_solution_convergence();

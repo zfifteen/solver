@@ -9,6 +9,7 @@ namespace solver {
 enum class AdvectionScheme : int {
   tvd = 0,
   upwind = 1,
+  central = 2,
 };
 
 enum class FluxLimiter : int {
@@ -43,4 +44,3 @@ void compute_diffusion_term(const VelocityField& velocity,
 CflDiagnostics compute_advective_cfl(const VelocityField& velocity, double dt);
 
 }  // namespace solver
-

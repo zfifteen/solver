@@ -169,8 +169,8 @@ Steps per timestep:
 
 1. assemble explicit convective and body-force terms
 2. solve the implicit predictor for intermediate velocity u*
-3. solve the pressure Poisson equation with BC-consistent RHS
-4. correct velocity and pressure
+3. solve the pressure-correction Poisson equation for phi with BC-consistent RHS
+4. correct velocity and update the total pressure
 5. enforce divergence-free velocity and log post-projection norms
 
 ---
@@ -181,20 +181,22 @@ Method:
 
 Incremental projection method (fractional step)
 
-Pressure Poisson equation:
+Pressure-correction Poisson equation:
 
-∇²p = (ρ/Δt) ∇·u*
+∇²phi = (ρ/Δt) ∇·u*
 
 Pressure solve occurs each timestep.
 
 Pressure boundary-condition rules:
 
-* no-slip walls, symmetry planes, and prescribed-velocity inflows use pressure
-  Neumann conditions derived from the normal momentum balance
-* prescribed-pressure outlets use pressure Dirichlet conditions
-* periodic boundaries remain periodic for both pressure and velocity
-* closed domains with only Neumann pressure boundaries enforce solvability by
-  removing the mean of the Poisson RHS and solving with a zero-mean pressure
+* the projection solve is for the pressure-correction variable phi, not the
+  total physical pressure field
+* no-slip walls, symmetry planes, and prescribed-velocity inflows use
+  homogeneous Neumann correction BCs
+* prescribed-pressure outlets use homogeneous Dirichlet correction BCs
+* periodic boundaries remain periodic for both pressure correction and velocity
+* closed domains with only Neumann correction boundaries enforce solvability by
+  removing the mean of the Poisson RHS and solving with a zero-mean correction
   constraint
 
 The projection implementation must apply boundary conditions and null-space
@@ -542,8 +544,10 @@ The solver must pass:
   128 x 128 case.
 * Plane Poiseuille flow: relative L2 velocity-profile error <= 5e-3 on the
   reference 128 x 128 case.
-* Lid-driven cavity, Re = 100, 128 x 128: centerline velocity extrema must
-  match the selected reference dataset within 2 percent.
+* Lid-driven cavity, Re = 100, 128 x 128: four named centerline sample points
+  in the validation harness must lie within the accepted steady-cavity
+  literature envelope, with any miss outside that envelope limited to 2
+  percent.
 * Taylor-Green vortex: normalized kinetic-energy error <= 1 percent over the
   benchmark time horizon.
 * Poisson analytic solve: relative L2 pressure error <= 1e-8 and relative

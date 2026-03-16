@@ -25,20 +25,18 @@ int main(int argc, char** argv) {
     std::cout << "v_horizontal_max: " << result.extrema.v_horizontal_max << '\n';
     std::cout << "v_horizontal_min: " << result.extrema.v_horizontal_min << '\n';
     std::cout << "reference_dataset: " << result.validation.reference_dataset << '\n';
-    std::cout << "u_vertical_max_reference_sample: " << result.validation.u_vertical_max_sample << '\n';
-    std::cout << "u_vertical_max_relative_error: "
-              << result.validation.u_vertical_max_relative_error << '\n';
-    std::cout << "u_vertical_min_reference_sample: " << result.validation.u_vertical_min_sample << '\n';
-    std::cout << "u_vertical_min_relative_error: "
-              << result.validation.u_vertical_min_relative_error << '\n';
-    std::cout << "v_horizontal_max_reference_sample: "
-              << result.validation.v_horizontal_max_sample << '\n';
-    std::cout << "v_horizontal_max_relative_error: "
-              << result.validation.v_horizontal_max_relative_error << '\n';
-    std::cout << "v_horizontal_min_reference_sample: "
-              << result.validation.v_horizontal_min_sample << '\n';
-    std::cout << "v_horizontal_min_relative_error: "
-              << result.validation.v_horizontal_min_relative_error << '\n';
+    std::cout << "max_reference_relative_error: " << result.validation.max_relative_error << '\n';
+    for(const solver::LidDrivenCavityValidationPoint& point : result.validation.points) {
+      if(point.label.empty()) {
+        continue;
+      }
+      std::cout << "reference_point[" << point.label << "]: line=" << solver::to_string(point.line)
+                << ", coordinate=" << point.coordinate << ", reference=" << point.reference_value
+                << ", reference_lower=" << point.reference_lower_bound
+                << ", reference_upper=" << point.reference_upper_bound
+                << ", sample=" << point.sample_value
+                << ", relative_error=" << point.relative_error << '\n';
+    }
 
     if(!config.validate_reference) {
       std::cout << "benchmark_status: skipped" << '\n';

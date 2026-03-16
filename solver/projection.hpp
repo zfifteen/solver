@@ -103,7 +103,8 @@ struct ProjectionDiagnostics {
 std::string to_string(PhysicalBoundaryType type);
 std::string to_string(PressureBoundaryType type);
 
-PressureBoundarySet derive_pressure_boundary_conditions(
+// Projection solves for the pressure-correction variable phi.
+PressureBoundarySet derive_pressure_correction_boundary_conditions(
     const BoundaryConditionSet& boundary_conditions);
 
 void apply_velocity_boundary_conditions(const BoundaryConditionSet& boundary_conditions,
@@ -123,7 +124,7 @@ void build_pressure_rhs(const VelocityField& predicted_velocity,
                         ScalarField& rhs);
 
 void correct_velocity(const VelocityField& predicted_velocity,
-                      const PressureField& pressure,
+                      const PressureField& pressure_correction,
                       const BoundaryConditionSet& boundary_conditions,
                       const ProjectionOptions& options,
                       VelocityField& corrected_velocity);
@@ -131,7 +132,7 @@ void correct_velocity(const VelocityField& predicted_velocity,
 ProjectionDiagnostics project_velocity(const VelocityField& predicted_velocity,
                                        const BoundaryConditionSet& boundary_conditions,
                                        const ProjectionOptions& options,
-                                       PressureField& pressure,
+                                       PressureField& pressure_correction,
                                        VelocityField& corrected_velocity,
                                        ScalarField* pressure_rhs = nullptr);
 

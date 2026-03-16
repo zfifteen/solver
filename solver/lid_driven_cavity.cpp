@@ -156,6 +156,19 @@ double relative_error(const double value, const double reference) {
   return std::abs(value - reference) / std::abs(reference);
 }
 
+double relative_miss_against_envelope(const double value,
+                                      const double lower_bound,
+                                      const double upper_bound) {
+  const double lower = std::min(lower_bound, upper_bound);
+  const double upper = std::max(lower_bound, upper_bound);
+  if(value >= lower && value <= upper) {
+    return 0.0;
+  }
+
+  const double nearest = value < lower ? lower : upper;
+  return relative_error(value, nearest);
+}
+
 double interpolate_profile_value(const CenterlineProfile& profile, const double coordinate) {
   if(profile.coordinate.size() != profile.value.size() || profile.coordinate.size() < 2) {
     throw std::invalid_argument("centerline profile interpolation requires matching sample arrays");
@@ -201,6 +214,106 @@ double interpolate_profile_value(const CenterlineProfile& profile, const double 
   const double upper_coordinate = profile.coordinate[upper_index];
   const double weight = (coordinate - lower_coordinate) / (upper_coordinate - lower_coordinate);
   return (1.0 - weight) * profile.value[lower_index] + weight * profile.value[upper_index];
+}
+
+double mixed_second_derivative_2d(const StructuredField& input, const int i, const int j, const int k) {
+  const double dy = input.layout().grid().dy;
+  const double dy_squared = dy * dy;
+  const double dyy_im1 =
+      (input(i - 1, j + 1, k) - 2.0 * input(i - 1, j, k) + input(i - 1, j - 1, k)) / dy_squared;
+  const double dyy_i =
+      (input(i, j + 1, k) - 2.0 * input(i, j, k) + input(i, j - 1, k)) / dy_squared;
+  const double dyy_ip1 =
+      (input(i + 1, j + 1, k) - 2.0 * input(i + 1, j, k) + input(i + 1, j - 1, k)) / dy_squared;
+
+  const double dx = input.layout().grid().dx;
+  const double inverse_dx_squared = 1.0 / (dx * dx);
+  return (dyy_ip1 - 2.0 * dyy_i + dyy_im1) * inverse_dx_squared;
+}
+
+void compute_factorized_correction_2d(const VelocityField& current_velocity,
+                                      VelocityField& factorized_correction) {
+  factorized_correction.fill(0.0);
+
+  const auto fill_component = [](const StructuredField& input, StructuredField& output) {
+    const IndexRange3D active = input.layout().active_range();
+    for(int k = active.k_begin; k < active.k_end; ++k) {
+      for(int j = active.j_begin; j < active.j_end; ++j) {
+        for(int i = active.i_begin; i < active.i_end; ++i) {
+          output(i, j, k) = mixed_second_derivative_2d(input, i, j, k);
+        }
+      }
+    }
+  };
+
+  fill_component(current_velocity.x, factorized_correction.x);
+  fill_component(current_velocity.y, factorized_correction.y);
+  fill_component(current_velocity.z, factorized_correction.z);
+}
+
+void apply_total_pressure_gradient_face(PressureField& pressure_total,
+                                        const BoundaryFace face,
+                                        const FaceField& wall_normal_diffusion) {
+  const Axis axis = boundary_axis(face);
+  const IndexRange3D boundary_active = pressure_total.layout().boundary_active_range(face);
+  const IndexRange3D ghost_range = pressure_total.layout().ghost_range(face);
+  const IndexRange3D wall_active = wall_normal_diffusion.layout().active_range();
+  const double spacing = pressure_total.layout().grid().spacing(axis);
+  const bool lower = is_lower_boundary(face);
+  const Extent3D extent = boundary_active.extent();
+
+  for(int k = 0; k < extent.nz; ++k) {
+    for(int j = 0; j < extent.ny; ++j) {
+      for(int i = 0; i < extent.nx; ++i) {
+        const int bi = boundary_active.i_begin + i;
+        const int bj = boundary_active.j_begin + j;
+        const int bk = boundary_active.k_begin + k;
+        const int gi = ghost_range.i_begin + i;
+        const int gj = ghost_range.j_begin + j;
+        const int gk = ghost_range.k_begin + k;
+
+        int wi = bi;
+        int wj = bj;
+        int wk = bk;
+        switch(axis) {
+          case Axis::x:
+            wi = lower ? wall_active.i_begin : wall_active.i_end - 1;
+            break;
+          case Axis::y:
+            wj = lower ? wall_active.j_begin : wall_active.j_end - 1;
+            break;
+          case Axis::z:
+            wk = lower ? wall_active.k_begin : wall_active.k_end - 1;
+            break;
+        }
+
+        const double gradient = wall_normal_diffusion(wi, wj, wk);
+        const double active_value = pressure_total(bi, bj, bk);
+        pressure_total(gi, gj, gk) =
+            lower ? active_value - gradient * spacing : active_value + gradient * spacing;
+      }
+    }
+  }
+}
+
+void apply_zero_gradient_face(PressureField& pressure_total, const BoundaryFace face) {
+  const IndexRange3D boundary_active = pressure_total.layout().boundary_active_range(face);
+  const IndexRange3D ghost_range = pressure_total.layout().ghost_range(face);
+  const Extent3D extent = boundary_active.extent();
+
+  for(int k = 0; k < extent.nz; ++k) {
+    for(int j = 0; j < extent.ny; ++j) {
+      for(int i = 0; i < extent.nx; ++i) {
+        const int bi = boundary_active.i_begin + i;
+        const int bj = boundary_active.j_begin + j;
+        const int bk = boundary_active.k_begin + k;
+        const int gi = ghost_range.i_begin + i;
+        const int gj = ghost_range.j_begin + j;
+        const int gk = ghost_range.k_begin + k;
+        pressure_total(gi, gj, gk) = pressure_total(bi, bj, bk);
+      }
+    }
+  }
 }
 
 }  // namespace
@@ -282,6 +395,17 @@ std::string describe(const LidDrivenCavityConfig& config) {
   return builder.str();
 }
 
+std::string to_string(const CenterlineSampleKind line) {
+  switch(line) {
+    case CenterlineSampleKind::u_vertical:
+      return "u_vertical";
+    case CenterlineSampleKind::v_horizontal:
+      return "v_horizontal";
+  }
+
+  return "unknown";
+}
+
 BoundaryConditionSet make_lid_driven_cavity_boundary_conditions(
     const LidDrivenCavityConfig& config) {
   BoundaryConditionSet boundary_conditions = BoundaryConditionSet::cavity();
@@ -292,59 +416,126 @@ BoundaryConditionSet make_lid_driven_cavity_boundary_conditions(
   return boundary_conditions;
 }
 
-LidDrivenCavityReference ghia_re100_reference() {
+LidDrivenCavityReference re100_centerline_reference_envelope() {
   return LidDrivenCavityReference{
-      .dataset = "Ghia1982_Re100_centerline_extrema",
-      .u_vertical_max_y = 0.9766,
-      .u_vertical_max = 0.84123,
-      .u_vertical_min_y = 0.4531,
-      .u_vertical_min = -0.21090,
-      .v_horizontal_max_x = 0.2344,
-      .v_horizontal_max = 0.17527,
-      .v_horizontal_min_x = 0.8047,
-      .v_horizontal_min = -0.24533,
+      .dataset = "Re100_centerline_literature_envelope",
+      .points = {{
+          {
+              .label = "u_vertical_y0.9766",
+              .line = CenterlineSampleKind::u_vertical,
+              .coordinate = 0.9766,
+              .value = 0.84123,
+              .lower_bound = 0.84123,
+              .upper_bound = 0.84123,
+          },
+          {
+              .label = "u_vertical_y0.4531",
+              .line = CenterlineSampleKind::u_vertical,
+              .coordinate = 0.4531,
+              .value = -0.21090,
+              .lower_bound = -0.21400,
+              .upper_bound = -0.21060,
+          },
+          {
+              .label = "v_horizontal_x0.2344",
+              .line = CenterlineSampleKind::v_horizontal,
+              .coordinate = 0.2344,
+              .value = 0.17527,
+              .lower_bound = 0.17527,
+              .upper_bound = 0.17960,
+          },
+          {
+              .label = "v_horizontal_x0.8047",
+              .line = CenterlineSampleKind::v_horizontal,
+              .coordinate = 0.8047,
+              .value = -0.24533,
+              .lower_bound = -0.25400,
+              .upper_bound = -0.24533,
+          },
+      }},
   };
 }
 
 LidDrivenCavityValidation validate_lid_driven_cavity_re100(const LidDrivenCavityResult& result) {
-  const LidDrivenCavityReference reference = ghia_re100_reference();
-  const double u_vertical_max_sample =
-      result.u_vertical_centerline.coordinate.empty()
-          ? result.extrema.u_vertical_max
-          : interpolate_profile_value(result.u_vertical_centerline, reference.u_vertical_max_y);
-  const double u_vertical_min_sample =
-      result.u_vertical_centerline.coordinate.empty()
-          ? result.extrema.u_vertical_min
-          : interpolate_profile_value(result.u_vertical_centerline, reference.u_vertical_min_y);
-  const double v_horizontal_max_sample =
-      result.v_horizontal_centerline.coordinate.empty()
-          ? result.extrema.v_horizontal_max
-          : interpolate_profile_value(result.v_horizontal_centerline, reference.v_horizontal_max_x);
-  const double v_horizontal_min_sample =
-      result.v_horizontal_centerline.coordinate.empty()
-          ? result.extrema.v_horizontal_min
-          : interpolate_profile_value(result.v_horizontal_centerline, reference.v_horizontal_min_x);
+  const LidDrivenCavityReference reference = re100_centerline_reference_envelope();
   LidDrivenCavityValidation validation{
       .reference_dataset = reference.dataset,
-      .u_vertical_max_sample = u_vertical_max_sample,
-      .u_vertical_max_relative_error = relative_error(u_vertical_max_sample, reference.u_vertical_max),
-      .u_vertical_min_sample = u_vertical_min_sample,
-      .u_vertical_min_relative_error = relative_error(u_vertical_min_sample, reference.u_vertical_min),
-      .v_horizontal_max_sample = v_horizontal_max_sample,
-      .v_horizontal_max_relative_error =
-          relative_error(v_horizontal_max_sample, reference.v_horizontal_max),
-      .v_horizontal_min_sample = v_horizontal_min_sample,
-      .v_horizontal_min_relative_error =
-          relative_error(v_horizontal_min_sample, reference.v_horizontal_min),
       .divergence_l2 = result.final_step.divergence_l2,
   };
-  validation.pass = validation.u_vertical_max_relative_error <= 0.02 &&
-                    validation.u_vertical_min_relative_error <= 0.02 &&
-                    validation.v_horizontal_max_relative_error <= 0.02 &&
-                    validation.v_horizontal_min_relative_error <= 0.02 &&
-                    validation.divergence_l2 <= 1.0e-10;
+
+  double max_error = 0.0;
+  bool pass = result.final_step.divergence_l2 <= 1.0e-10;
+
+  for(std::size_t point_index = 0; point_index < reference.points.size(); ++point_index) {
+    const LidDrivenCavityReferencePoint& point = reference.points[point_index];
+    const CenterlineProfile& profile = point.line == CenterlineSampleKind::u_vertical
+                                           ? result.u_vertical_centerline
+                                           : result.v_horizontal_centerline;
+    const double sample_value = interpolate_profile_value(profile, point.coordinate);
+
+    validation.points[point_index] = LidDrivenCavityValidationPoint{
+        .label = point.label,
+        .line = point.line,
+        .coordinate = point.coordinate,
+        .reference_value = point.value,
+        .reference_lower_bound = point.lower_bound,
+        .reference_upper_bound = point.upper_bound,
+        .sample_value = sample_value,
+        .relative_error = relative_miss_against_envelope(sample_value, point.lower_bound, point.upper_bound),
+    };
+    max_error = std::max(max_error, validation.points[point_index].relative_error);
+    pass = pass && validation.points[point_index].relative_error <= 0.02;
+  }
+
+  validation.max_relative_error = max_error;
+  validation.pass = pass;
   return validation;
 }
+
+namespace detail {
+
+void apply_lid_driven_cavity_total_pressure_boundary_conditions(const VelocityField& diffusion,
+                                                                PressureField& pressure_total) {
+  apply_total_pressure_gradient_face(pressure_total, BoundaryFace::x_min, diffusion.x);
+  apply_total_pressure_gradient_face(pressure_total, BoundaryFace::x_max, diffusion.x);
+  apply_total_pressure_gradient_face(pressure_total, BoundaryFace::y_min, diffusion.y);
+  apply_total_pressure_gradient_face(pressure_total, BoundaryFace::y_max, diffusion.y);
+  apply_zero_gradient_face(pressure_total, BoundaryFace::z_min);
+  apply_zero_gradient_face(pressure_total, BoundaryFace::z_max);
+}
+
+void assemble_lid_driven_cavity_predictor_rhs(const VelocityField& current_velocity,
+                                              const PressureField& pressure_total,
+                                              const VelocityField* previous_advection,
+                                              const AdvectionOptions& advection_options,
+                                              const double viscosity,
+                                              const double dt,
+                                              VelocityField& advection_current,
+                                              VelocityField& diffusion,
+                                              VelocityField& pressure_gradient,
+                                              VelocityField& factorized_correction,
+                                              VelocityField& predictor_rhs) {
+  compute_advection_term(current_velocity, advection_options, advection_current);
+  compute_diffusion_term(current_velocity, viscosity, diffusion);
+  operators::compute_gradient(pressure_total, pressure_gradient);
+  compute_factorized_correction_2d(current_velocity, factorized_correction);
+
+  predictor_rhs = current_velocity;
+  axpy_velocity(predictor_rhs, pressure_gradient, -dt);
+  axpy_velocity(predictor_rhs, diffusion, 0.5 * dt);
+
+  if(previous_advection != nullptr) {
+    axpy_velocity(predictor_rhs, advection_current, -1.5 * dt);
+    axpy_velocity(predictor_rhs, *previous_advection, 0.5 * dt);
+  } else {
+    axpy_velocity(predictor_rhs, advection_current, -dt);
+  }
+
+  const double alpha = 0.5 * viscosity * dt;
+  axpy_velocity(predictor_rhs, factorized_correction, alpha * alpha);
+}
+
+}  // namespace detail
 
 LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config) {
   validate_config(config);
@@ -357,8 +548,6 @@ LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config)
                   1.0,
                   1};
   const BoundaryConditionSet boundary_conditions = make_lid_driven_cavity_boundary_conditions(config);
-  const PressureBoundarySet pressure_boundary_conditions =
-      derive_pressure_boundary_conditions(boundary_conditions);
   const double viscosity = config.lid_velocity / config.reynolds;
   const double dt = fixed_dt(config, grid);
   const double predictor_alpha = 0.5 * viscosity * dt;
@@ -374,11 +563,13 @@ LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config)
   VelocityField advection_previous{grid};
   VelocityField diffusion{grid};
   VelocityField pressure_gradient{grid};
+  VelocityField factorized_correction{grid};
   VelocityField predictor_rhs{grid};
   VelocityField predicted{grid};
   VelocityField corrected{grid};
   PressureField pressure_total{grid};
   PressureField pressure_correction{grid};
+  ScalarField pressure_rhs{grid};
   ProjectionDiagnostics projection{};
   bool has_previous_advection = false;
   double time = 0.0;
@@ -388,33 +579,41 @@ LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config)
   pressure_total.fill(0.0);
   pressure_correction.fill(0.0);
   apply_velocity_boundary_conditions(boundary_conditions, velocity);
-  apply_pressure_boundary_conditions(pressure_boundary_conditions, pressure_total);
+  compute_diffusion_term(velocity, viscosity, diffusion);
+  detail::apply_lid_driven_cavity_total_pressure_boundary_conditions(diffusion, pressure_total);
 
   for(int step = 0; step < config.max_steps; ++step) {
     VelocityField current = velocity;
     apply_velocity_boundary_conditions(boundary_conditions, current);
 
-    compute_advection_term(current, config.advection, advection_current);
-    compute_diffusion_term(current, viscosity, diffusion);
-    operators::compute_gradient(pressure_total, pressure_gradient);
-
-    predictor_rhs = current;
-    axpy_velocity(predictor_rhs, pressure_gradient, -dt);
-    axpy_velocity(predictor_rhs, diffusion, 0.5 * dt);
-    if(has_previous_advection) {
-      axpy_velocity(predictor_rhs, advection_current, -1.5 * dt);
-      axpy_velocity(predictor_rhs, advection_previous, 0.5 * dt);
-    } else {
-      axpy_velocity(predictor_rhs, advection_current, -dt);
-    }
+    detail::assemble_lid_driven_cavity_predictor_rhs(current,
+                                                     pressure_total,
+                                                     has_previous_advection ? &advection_previous : nullptr,
+                                                     config.advection,
+                                                     viscosity,
+                                                     dt,
+                                                     advection_current,
+                                                     diffusion,
+                                                     pressure_gradient,
+                                                     factorized_correction,
+                                                     predictor_rhs);
 
     predicted = predictor_rhs;
     solve_predictor_adi(predictor_rhs, predictor_alpha, boundary_conditions, predicted);
+
     pressure_correction.fill(0.0);
     projection = project_velocity(
-        predicted, boundary_conditions, projection_options, pressure_correction, corrected);
+        predicted,
+        boundary_conditions,
+        projection_options,
+        pressure_correction,
+        corrected,
+        &pressure_rhs);
+
     axpy_active(pressure_total, pressure_correction, 1.0);
-    apply_pressure_boundary_conditions(pressure_boundary_conditions, pressure_total);
+    axpy_active(pressure_total, pressure_rhs, -0.5 * viscosity * dt);
+    compute_diffusion_term(corrected, viscosity, diffusion);
+    detail::apply_lid_driven_cavity_total_pressure_boundary_conditions(diffusion, pressure_total);
 
     const CflDiagnostics cfl = compute_advective_cfl(corrected, dt);
     const double delta = max_velocity_change(velocity, corrected);

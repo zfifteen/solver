@@ -48,6 +48,10 @@ double reconstruct_face_x(const StructuredField& field,
   const double left = field(i_right - 1, j, k);
   const double right = field(i_right, j, k);
 
+  if(options.scheme == AdvectionScheme::central) {
+    return 0.5 * (left + right);
+  }
+
   if(options.scheme == AdvectionScheme::upwind || std::abs(face_velocity) < kSmallDenominator) {
     return face_velocity >= 0.0 ? left : right;
   }
@@ -80,6 +84,10 @@ double reconstruct_face_y(const StructuredField& field,
                           const AdvectionOptions& options) {
   const double lower = field(i, j_right - 1, k);
   const double upper = field(i, j_right, k);
+
+  if(options.scheme == AdvectionScheme::central) {
+    return 0.5 * (lower + upper);
+  }
 
   if(options.scheme == AdvectionScheme::upwind || std::abs(face_velocity) < kSmallDenominator) {
     return face_velocity >= 0.0 ? lower : upper;
@@ -217,6 +225,8 @@ std::string to_string(const AdvectionScheme scheme) {
       return "tvd";
     case AdvectionScheme::upwind:
       return "upwind";
+    case AdvectionScheme::central:
+      return "central";
   }
 
   return "unknown";

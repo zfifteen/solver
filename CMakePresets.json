@@ -1,0 +1,64 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+      }
+    },
+    {
+      "name": "deterministic",
+      "inherits": "base",
+      "displayName": "Deterministic Validation",
+      "description": "Reference build without fast-math for validation and reproducibility.",
+      "cacheVariables": {
+        "SOLVER_BUILD_PROFILE": "deterministic"
+      }
+    },
+    {
+      "name": "benchmark",
+      "inherits": "base",
+      "displayName": "Benchmark",
+      "description": "Performance-oriented build profile for labeled experiments.",
+      "cacheVariables": {
+        "SOLVER_BUILD_PROFILE": "benchmark"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "deterministic",
+      "configurePreset": "deterministic"
+    },
+    {
+      "name": "benchmark",
+      "configurePreset": "benchmark"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "deterministic",
+      "configurePreset": "deterministic",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "benchmark",
+      "configurePreset": "benchmark",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}
+

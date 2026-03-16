@@ -6,11 +6,11 @@ That combination matters here. A lot of scientific software grows by accumulatin
 
 Right now, the repository is still early, but it has moved well past the "just scaffolding" stage. It now contains multiple full simulation and verification paths rather than only isolated numerical building blocks. The codebase has the locked-down build environment, the structured-grid and field-storage layer, the discrete operators, the transport-term kernels, the projection machinery, the matrix-free MGPCG pressure solver, the cavity benchmark path, and now a generalized boundary-condition system exercised by analytic Couette and Poiseuille verification cases. In other words, this repo is already opinionated about how the solver should be built, validated, and evolved before the later restart, output, and optimization passes arrive.
 
-If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 7 of that plan.
+If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 8 of that plan.
 
 ## Current Status
 
-The repository is currently at **Milestone 7: Boundary Condition System**.
+The repository is currently at **Milestone 8: Restart and Output**.
 
 Implemented today:
 
@@ -39,6 +39,11 @@ Implemented today:
 - channel-flow verification driver covering Couette and Poiseuille cases
 - deterministic channel benchmark executable plus smoke and 128 x 128 validation configs
 - analytic profile validation for Couette and Poiseuille at the M7 acceptance threshold
+- stateful cavity stepping API for deterministic continuation and restart tests
+- versioned little-endian binary checkpoint format with checksum verification
+- build/configuration hash validation on checkpoint load
+- checkpoint-based cavity restart loader with bitwise deterministic continuation coverage
+- legacy VTK export for cell-centered pressure and reconstructed velocity
 - a smoke-test executable that reports build/runtime metadata
 - a minimal test executable wired into CTest
 - a simple time-based profiling helper script
@@ -46,7 +51,6 @@ Implemented today:
 
 What is not implemented yet:
 
-- checkpointing, restart I/O, and durable output formats
 - broader verification and benchmark cases beyond cavity, Couette, and Poiseuille
 - 3D simulation support and large-scale performance work
 
@@ -55,6 +59,7 @@ Current implementation note:
 - the advection kernel and the current cavity driver are still intentionally 2D-only
 - the current full-case drivers remain intentionally specialized even though they now share the generalized boundary-condition system underneath
 - the cavity benchmark validates against a steady-cavity literature envelope rather than treating the coarse Ghia point table as the sole source of truth
+- the current restart/output path is implemented for the cavity driver first, which is the milestone-appropriate full simulation path
 
 ## Project Goals
 
@@ -106,7 +111,7 @@ The full solver architecture is described in [TECH-SPEC.md](TECH-SPEC.md), but t
 - validation default: advective CFL `<= 0.5` unless a benchmark case says otherwise
 - current full-case benchmarks: lid-driven cavity at `Re = 100`, plus analytic Couette and Poiseuille profile preservation cases
 
-Parts of that numerical path are now implemented at the operator, transport, projection, linear-solver, and boundary-condition layers, and the rest remains the governing design contract for the upcoming milestones.
+Parts of that numerical path are now implemented at the operator, transport, projection, linear-solver, boundary-condition, and restart/output layers, and the rest remains the governing design contract for the upcoming milestones.
 
 ## Repository Layout
 
@@ -135,7 +140,7 @@ What those directories mean in practice right now:
 - `tests/`: the CTest-backed validation executable
 - `benchmarks/`: cavity plus channel-flow smoke and validation configs
 - `bc/`: the shared boundary-condition abstraction used by the solver layer
-- `io/`: reserved for later milestones
+- `io/`: checkpoint serialization, restart loading, and VTK export
 
 The technical and roadmap documents live at the repository root and currently act as the primary design references.
 
@@ -175,6 +180,7 @@ The current build produces:
 - `solver_operators`: the discrete-operator library built on top of the core field layer
 - `solver_linsolve`: matrix-free Poisson application plus MGPCG / geometric multigrid pressure solve
 - `solver_momentum`: advection, diffusion, CFL, projection utilities, the cavity driver, and the channel-flow verification driver layered on top of the linsolve path
+- `solver_io`: checkpoint/restart and VTK export layered on top of the current solver state types
 - `solver_example`: a smoke-test executable under `build/<profile>/tools/`
 - `solver_cavity`: the lid-driven cavity benchmark executable under `build/<profile>/tools/`
 - `solver_channel`: the Couette / Poiseuille verification executable under `build/<profile>/tools/`
@@ -213,7 +219,19 @@ build/deterministic/tools/solver_channel benchmarks/channel_couette_128.cfg
 build/deterministic/tools/solver_channel benchmarks/channel_poiseuille_128.cfg
 ```
 
-Today’s test coverage is still intentionally focused, but it now covers the full Milestone 7 gate. The current test executable checks that:
+Write a checkpoint and VTK file from a short cavity run:
+
+```bash
+build/deterministic/tools/solver_cavity benchmarks/lid_driven_cavity_smoke.cfg --steps 6 --checkpoint-out /tmp/solver.chk --vtk-out /tmp/solver.vtk
+```
+
+Restart from that checkpoint for more steps:
+
+```bash
+build/deterministic/tools/solver_cavity benchmarks/lid_driven_cavity_smoke.cfg --restart /tmp/solver.chk --steps 6
+```
+
+Today’s test coverage is still intentionally focused, but it now covers the full Milestone 8 gate. The current test executable checks that:
 
 - the build profile is one of the locked profile names
 - the runtime platform is Apple Silicon
@@ -242,10 +260,14 @@ Today’s test coverage is still intentionally focused, but it now covers the fu
 - the MGPCG solve preserves zero-mean pressure for a pure-Neumann problem
 - the MGPCG residual converges to the required relative tolerance and reports the fixed policy metadata
 - the Couette and Poiseuille verification paths load configs, apply the intended BC sets, and pass their analytic profile gates
+- checkpoint round-trips preserve the cavity continuation state bitwise
+- corrupted checkpoints fail checksum verification before restart
+- split cavity runs reproduce uninterrupted deterministic runs bitwise after restart
+- VTK export writes the expected legacy dataset structure and field names
 - the cavity smoke run remains stable and divergence controlled
 - the cavity validation harness samples the named reference points correctly and rejects out-of-range results
 
-That is enough for Milestone 7. It is not meant to stand in for the broader benchmark and regression suite described in the technical spec.
+That is enough for Milestone 8. It is not meant to stand in for the broader benchmark and regression suite described in the technical spec.
 
 ## Profiling
 
@@ -269,9 +291,10 @@ The implementation plan is spelled out in [EXECUTION_ROADMAP_V1.md](EXECUTION_RO
 6. Milestone 5: implement the pressure linear solver system
 7. Milestone 6: hardcoded cavity benchmark validation
 8. Milestone 7: boundary-condition generalization plus Couette and Poiseuille verification
-9. Milestone 8 and beyond: restart/output, broader verification, profiling, optimization, 3D support, and conditional Metal acceleration
+9. Milestone 8: restart/output for the current full simulation path
+10. Milestone 9 and beyond: broader verification, profiling, optimization, 3D support, and conditional Metal acceleration
 
-The repository has completed the first eight items in that sequence and is set up to move into restart/output and broader verification work next.
+The repository has completed the first nine items in that sequence and is set up to move into the broader verification milestone next.
 
 The important project rule is simple: **do not advance to the next milestone unless the current validation gate passes**.
 

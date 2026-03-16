@@ -4,7 +4,7 @@ add_executable(solver_tests
 
 target_link_libraries(solver_tests
   PRIVATE
-    solver_momentum
+    solver_io
 )
 
 target_compile_definitions(solver_tests

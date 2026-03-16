@@ -85,6 +85,17 @@ struct LidDrivenCavityValidation {
   bool pass = false;
 };
 
+struct LidDrivenCavityState {
+  Grid grid;
+  VelocityField velocity;
+  VelocityField advection_previous;
+  PressureField pressure_total;
+  SimulationStepMetrics metrics{};
+  bool has_previous_advection = false;
+
+  explicit LidDrivenCavityState(const Grid& grid_in);
+};
+
 struct LidDrivenCavityResult {
   LidDrivenCavityConfig config{};
   SimulationStepMetrics final_step{};
@@ -100,9 +111,20 @@ struct LidDrivenCavityResult {
 [[nodiscard]] std::string to_string(CenterlineSampleKind line);
 [[nodiscard]] BoundaryConditionSet make_lid_driven_cavity_boundary_conditions(
     const LidDrivenCavityConfig& config);
+[[nodiscard]] Grid make_lid_driven_cavity_grid(const LidDrivenCavityConfig& config);
+[[nodiscard]] double lid_driven_cavity_viscosity(const LidDrivenCavityConfig& config);
+[[nodiscard]] double lid_driven_cavity_dt(const LidDrivenCavityConfig& config);
+[[nodiscard]] LidDrivenCavityState initialize_lid_driven_cavity_state(
+    const LidDrivenCavityConfig& config);
+void run_lid_driven_cavity_steps(const LidDrivenCavityConfig& config,
+                                 int step_count,
+                                 LidDrivenCavityState& state);
 [[nodiscard]] LidDrivenCavityReference re100_centerline_reference_envelope();
 [[nodiscard]] LidDrivenCavityValidation validate_lid_driven_cavity_re100(
     const LidDrivenCavityResult& result);
+[[nodiscard]] LidDrivenCavityResult finalize_lid_driven_cavity_result(
+    const LidDrivenCavityConfig& config,
+    const LidDrivenCavityState& state);
 [[nodiscard]] LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config);
 
 namespace detail {

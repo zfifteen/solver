@@ -13,7 +13,7 @@ add_executable(solver_cavity
 
 target_link_libraries(solver_cavity
   PRIVATE
-    solver_momentum
+    solver_io
 )
 
 add_executable(solver_channel

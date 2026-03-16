@@ -1,6 +1,8 @@
 #include "core/fields.hpp"
 #include "core/grid.hpp"
 #include "core/runtime.hpp"
+#include "io/checkpoint.hpp"
+#include "io/vtk_export.hpp"
 #include "linsolve/poisson_solver.hpp"
 #include "operators/discrete_operators.hpp"
 #include "solver/channel_flow.hpp"
@@ -8,9 +10,14 @@
 #include "solver/momentum_terms.hpp"
 #include "solver/projection.hpp"
 
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -30,6 +37,10 @@ double pi() {
 
 std::string source_path(const std::string& relative_path) {
   return std::string(SOLVER_SOURCE_DIR) + "/" + relative_path;
+}
+
+std::filesystem::path temp_path(const std::string& filename) {
+  return std::filesystem::temp_directory_path() / filename;
 }
 
 double square(const double value) {
@@ -205,6 +216,44 @@ double relative_active_l2_difference(const Field& left, const Field& right) {
   const double denominator = active_l2_norm_value(right);
   require(denominator > 0.0, "relative_active_l2_difference requires non-zero reference norm");
   return active_l2_difference(left, right) / denominator;
+}
+
+bool storage_bitwise_equal(const solver::StructuredField& left, const solver::StructuredField& right) {
+  const solver::Extent3D left_storage = left.layout().storage_extent();
+  const solver::Extent3D right_storage = right.layout().storage_extent();
+  if(left_storage.nx != right_storage.nx || left_storage.ny != right_storage.ny ||
+     left_storage.nz != right_storage.nz) {
+    return false;
+  }
+
+  for(int k = 0; k < left_storage.nz; ++k) {
+    for(int j = 0; j < left_storage.ny; ++j) {
+      for(int i = 0; i < left_storage.nx; ++i) {
+        if(std::bit_cast<std::uint64_t>(left(i, j, k)) !=
+           std::bit_cast<std::uint64_t>(right(i, j, k))) {
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+bool metrics_bitwise_equal(const solver::SimulationStepMetrics& left,
+                           const solver::SimulationStepMetrics& right) {
+  return left.step == right.step &&
+         std::bit_cast<std::uint64_t>(left.time) == std::bit_cast<std::uint64_t>(right.time) &&
+         std::bit_cast<std::uint64_t>(left.dt) == std::bit_cast<std::uint64_t>(right.dt) &&
+         std::bit_cast<std::uint64_t>(left.max_cfl) ==
+             std::bit_cast<std::uint64_t>(right.max_cfl) &&
+         std::bit_cast<std::uint64_t>(left.max_velocity_change) ==
+             std::bit_cast<std::uint64_t>(right.max_velocity_change) &&
+         std::bit_cast<std::uint64_t>(left.divergence_l2) ==
+             std::bit_cast<std::uint64_t>(right.divergence_l2) &&
+         left.pressure_iterations == right.pressure_iterations &&
+         std::bit_cast<std::uint64_t>(left.pressure_relative_residual) ==
+             std::bit_cast<std::uint64_t>(right.pressure_relative_residual);
 }
 
 template <typename Field>
@@ -1515,6 +1564,154 @@ void test_channel_flow_poiseuille_profile_validation() {
   require(result.validation.pass, "Poiseuille smoke validation should pass");
 }
 
+void test_lid_driven_cavity_checkpoint_roundtrip_and_checksum() {
+  solver::LidDrivenCavityConfig config = solver::load_lid_driven_cavity_config(
+      source_path("benchmarks/lid_driven_cavity_smoke.cfg"));
+  config.max_steps = 32;
+  config.min_steps = 32;
+  solver::LidDrivenCavityState state = solver::initialize_lid_driven_cavity_state(config);
+  solver::run_lid_driven_cavity_steps(config, 6, state);
+
+  const std::filesystem::path checkpoint_path = temp_path("solver_lid_roundtrip.chk");
+  const std::filesystem::path corrupted_path = temp_path("solver_lid_roundtrip_corrupt.chk");
+  solver::io::write_lid_driven_cavity_checkpoint(checkpoint_path.string(), config, state);
+  const solver::io::LidDrivenCavityCheckpoint loaded =
+      solver::io::load_lid_driven_cavity_checkpoint(checkpoint_path.string(), config);
+
+  require(loaded.metadata.format_version == 1u, "checkpoint format version mismatch");
+  require(loaded.metadata.endianness == "little", "checkpoint should record little-endian encoding");
+  require(loaded.metadata.scalar_bytes == sizeof(double),
+          "checkpoint precision metadata mismatch");
+  require(loaded.metadata.checksum != 0u, "checkpoint checksum should be populated");
+  require(loaded.metadata.build_hash != 0u, "checkpoint build hash should be populated");
+  require(loaded.metadata.configuration_hash != 0u,
+          "checkpoint configuration hash should be populated");
+  require(loaded.state.has_previous_advection == state.has_previous_advection,
+          "checkpoint should preserve AB2 history availability");
+  require(metrics_bitwise_equal(loaded.state.metrics, state.metrics),
+          "checkpoint should preserve the full step metrics bitwise");
+  require(storage_bitwise_equal(loaded.state.velocity.x, state.velocity.x),
+          "checkpoint should preserve velocity.x bitwise");
+  require(storage_bitwise_equal(loaded.state.velocity.y, state.velocity.y),
+          "checkpoint should preserve velocity.y bitwise");
+  require(storage_bitwise_equal(loaded.state.velocity.z, state.velocity.z),
+          "checkpoint should preserve velocity.z bitwise");
+  require(storage_bitwise_equal(loaded.state.advection_previous.x, state.advection_previous.x),
+          "checkpoint should preserve advection_previous.x bitwise");
+  require(storage_bitwise_equal(loaded.state.advection_previous.y, state.advection_previous.y),
+          "checkpoint should preserve advection_previous.y bitwise");
+  require(storage_bitwise_equal(loaded.state.advection_previous.z, state.advection_previous.z),
+          "checkpoint should preserve advection_previous.z bitwise");
+  require(storage_bitwise_equal(loaded.state.pressure_total, state.pressure_total),
+          "checkpoint should preserve pressure_total bitwise");
+
+  std::ifstream input(checkpoint_path, std::ios::binary);
+  std::vector<char> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  require(bytes.size() > 32, "checkpoint corruption test needs a nontrivial payload");
+  bytes.back() = static_cast<char>(bytes.back() ^ 0x5a);
+  std::ofstream output(corrupted_path, std::ios::binary);
+  output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  output.close();
+
+  bool checksum_failed = false;
+  try {
+    static_cast<void>(
+        solver::io::load_lid_driven_cavity_checkpoint(corrupted_path.string(), config));
+  } catch(const std::exception&) {
+    checksum_failed = true;
+  }
+  require(checksum_failed, "corrupted checkpoint should fail checksum verification");
+
+  std::error_code ignore_error;
+  std::filesystem::remove(checkpoint_path, ignore_error);
+  std::filesystem::remove(corrupted_path, ignore_error);
+}
+
+void test_lid_driven_cavity_restart_is_bitwise_deterministic() {
+  solver::LidDrivenCavityConfig config = solver::load_lid_driven_cavity_config(
+      source_path("benchmarks/lid_driven_cavity_smoke.cfg"));
+  config.nx = 24;
+  config.ny = 24;
+  config.max_steps = 200;
+  config.min_steps = 200;
+  config.steady_tolerance = 1.0e-30;
+  config.validate_reference = false;
+
+  solver::LidDrivenCavityState uninterrupted = solver::initialize_lid_driven_cavity_state(config);
+  solver::run_lid_driven_cavity_steps(config, 200, uninterrupted);
+
+  solver::LidDrivenCavityState split = solver::initialize_lid_driven_cavity_state(config);
+  solver::run_lid_driven_cavity_steps(config, 100, split);
+
+  const std::filesystem::path checkpoint_path = temp_path("solver_lid_restart.chk");
+  solver::io::write_lid_driven_cavity_checkpoint(checkpoint_path.string(), config, split);
+  split = solver::io::load_lid_driven_cavity_checkpoint(checkpoint_path.string(), config).state;
+  solver::run_lid_driven_cavity_steps(config, 100, split);
+
+  require(split.has_previous_advection == uninterrupted.has_previous_advection,
+          "restart path drifted in AB2 history availability");
+  require(metrics_bitwise_equal(split.metrics, uninterrupted.metrics),
+          "restart path drifted in final step metrics");
+  require(storage_bitwise_equal(split.velocity.x, uninterrupted.velocity.x),
+          "restart path drifted in velocity.x");
+  require(storage_bitwise_equal(split.velocity.y, uninterrupted.velocity.y),
+          "restart path drifted in velocity.y");
+  require(storage_bitwise_equal(split.velocity.z, uninterrupted.velocity.z),
+          "restart path drifted in velocity.z");
+  require(storage_bitwise_equal(split.advection_previous.x, uninterrupted.advection_previous.x),
+          "restart path drifted in advection_previous.x");
+  require(storage_bitwise_equal(split.advection_previous.y, uninterrupted.advection_previous.y),
+          "restart path drifted in advection_previous.y");
+  require(storage_bitwise_equal(split.advection_previous.z, uninterrupted.advection_previous.z),
+          "restart path drifted in advection_previous.z");
+  require(storage_bitwise_equal(split.pressure_total, uninterrupted.pressure_total),
+          "restart path drifted in pressure_total");
+
+  const solver::LidDrivenCavityResult split_result =
+      solver::finalize_lid_driven_cavity_result(config, split);
+  const solver::LidDrivenCavityResult uninterrupted_result =
+      solver::finalize_lid_driven_cavity_result(config, uninterrupted);
+  require(metrics_bitwise_equal(split_result.final_step, uninterrupted_result.final_step),
+          "restart path drifted in finalized metrics");
+  for(std::size_t index = 0; index < split_result.u_vertical_centerline.value.size(); ++index) {
+    require(std::bit_cast<std::uint64_t>(split_result.u_vertical_centerline.value[index]) ==
+                std::bit_cast<std::uint64_t>(uninterrupted_result.u_vertical_centerline.value[index]),
+            "restart path drifted in finalized u centerline");
+  }
+  for(std::size_t index = 0; index < split_result.v_horizontal_centerline.value.size(); ++index) {
+    require(std::bit_cast<std::uint64_t>(split_result.v_horizontal_centerline.value[index]) ==
+                std::bit_cast<std::uint64_t>(uninterrupted_result.v_horizontal_centerline.value[index]),
+            "restart path drifted in finalized v centerline");
+  }
+
+  std::error_code ignore_error;
+  std::filesystem::remove(checkpoint_path, ignore_error);
+}
+
+void test_lid_driven_cavity_vtk_export() {
+  solver::LidDrivenCavityConfig config = solver::load_lid_driven_cavity_config(
+      source_path("benchmarks/lid_driven_cavity_smoke.cfg"));
+  solver::LidDrivenCavityState state = solver::initialize_lid_driven_cavity_state(config);
+  solver::run_lid_driven_cavity_steps(config, 2, state);
+
+  const std::filesystem::path vtk_path = temp_path("solver_lid_state.vtk");
+  solver::io::write_lid_driven_cavity_vtk(vtk_path.string(), state);
+
+  std::ifstream input(vtk_path);
+  const std::string contents((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  require(contents.find("# vtk DataFile Version 3.0") != std::string::npos,
+          "VTK export should write the legacy VTK header");
+  require(contents.find("DATASET STRUCTURED_POINTS") != std::string::npos,
+          "VTK export should declare a structured-points dataset");
+  require(contents.find("VECTORS velocity double") != std::string::npos,
+          "VTK export should contain the velocity vector field");
+  require(contents.find("SCALARS pressure double 1") != std::string::npos,
+          "VTK export should contain the pressure scalar field");
+
+  std::error_code ignore_error;
+  std::filesystem::remove(vtk_path, ignore_error);
+}
+
 void test_lid_driven_cavity_smoke_run() {
   const solver::LidDrivenCavityConfig config = solver::load_lid_driven_cavity_config(
       source_path("benchmarks/lid_driven_cavity_smoke.cfg"));
@@ -1612,6 +1809,9 @@ int main() {
     test_channel_flow_config_loader_and_boundary_conditions();
     test_channel_flow_couette_profile_validation();
     test_channel_flow_poiseuille_profile_validation();
+    test_lid_driven_cavity_checkpoint_roundtrip_and_checksum();
+    test_lid_driven_cavity_restart_is_bitwise_deterministic();
+    test_lid_driven_cavity_vtk_export();
     test_lid_driven_cavity_smoke_run();
     test_lid_driven_cavity_reference_validation_gate();
   } catch(const std::exception& exception) {

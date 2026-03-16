@@ -251,7 +251,25 @@ void compute_factorized_correction_2d(const VelocityField& current_velocity,
   fill_component(current_velocity.z, factorized_correction.z);
 }
 
+bool same_grid(const Grid& left, const Grid& right) {
+  return left.nx == right.nx && left.ny == right.ny && left.nz == right.nz &&
+         left.dx == right.dx && left.dy == right.dy && left.dz == right.dz &&
+         left.ghost_layers == right.ghost_layers;
+}
+
+bool steady_stop_reached(const LidDrivenCavityConfig& config,
+                         const SimulationStepMetrics& metrics) {
+  return metrics.step >= config.min_steps &&
+         metrics.max_velocity_change <= config.steady_tolerance;
+}
+
 }  // namespace
+
+LidDrivenCavityState::LidDrivenCavityState(const Grid& grid_in)
+    : grid(grid_in),
+      velocity(grid),
+      advection_previous(grid),
+      pressure_total(grid) {}
 
 LidDrivenCavityConfig default_lid_driven_cavity_config() {
   return LidDrivenCavityConfig{};
@@ -349,6 +367,45 @@ BoundaryConditionSet make_lid_driven_cavity_boundary_conditions(
   boundary_conditions[BoundaryFace::z_min].type = PhysicalBoundaryType::symmetry;
   boundary_conditions[BoundaryFace::z_max].type = PhysicalBoundaryType::symmetry;
   return boundary_conditions;
+}
+
+Grid make_lid_driven_cavity_grid(const LidDrivenCavityConfig& config) {
+  return Grid{config.nx,
+              config.ny,
+              1,
+              1.0 / static_cast<double>(config.nx),
+              1.0 / static_cast<double>(config.ny),
+              1.0,
+              1};
+}
+
+double lid_driven_cavity_viscosity(const LidDrivenCavityConfig& config) {
+  return config.lid_velocity / config.reynolds;
+}
+
+double lid_driven_cavity_dt(const LidDrivenCavityConfig& config) {
+  return fixed_dt(config, make_lid_driven_cavity_grid(config));
+}
+
+LidDrivenCavityState initialize_lid_driven_cavity_state(const LidDrivenCavityConfig& config) {
+  validate_config(config);
+
+  const Grid grid = make_lid_driven_cavity_grid(config);
+  const BoundaryConditionSet boundary_conditions =
+      make_lid_driven_cavity_boundary_conditions(config);
+  const double viscosity = lid_driven_cavity_viscosity(config);
+
+  LidDrivenCavityState state{grid};
+  state.metrics.dt = lid_driven_cavity_dt(config);
+  state.velocity.fill(0.0);
+  state.advection_previous.fill(0.0);
+  state.pressure_total.fill(0.0);
+  apply_velocity_boundary_conditions(boundary_conditions, state.velocity);
+
+  VelocityField diffusion{grid};
+  compute_diffusion_term(state.velocity, viscosity, diffusion);
+  apply_total_pressure_boundary_conditions(boundary_conditions, diffusion, state.pressure_total);
+  return state;
 }
 
 LidDrivenCavityReference re100_centerline_reference_envelope() {
@@ -462,19 +519,25 @@ void assemble_lid_driven_cavity_predictor_rhs(const VelocityField& current_veloc
 
 }  // namespace detail
 
-LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config) {
-  validate_config(config);
+namespace {
 
-  const Grid grid{config.nx,
-                  config.ny,
-                  1,
-                  1.0 / static_cast<double>(config.nx),
-                  1.0 / static_cast<double>(config.ny),
-                  1.0,
-                  1};
+void advance_lid_driven_cavity_impl(const LidDrivenCavityConfig& config,
+                                    const int step_count,
+                                    const bool stop_on_steady,
+                                    LidDrivenCavityState& state) {
+  validate_config(config);
+  if(step_count < 0) {
+    throw std::invalid_argument("run_lid_driven_cavity_steps expects a non-negative step count");
+  }
+
+  const Grid grid = make_lid_driven_cavity_grid(config);
+  if(!same_grid(state.grid, grid)) {
+    throw std::invalid_argument("lid-driven cavity state grid does not match the config");
+  }
+
   const BoundaryConditionSet boundary_conditions = make_lid_driven_cavity_boundary_conditions(config);
-  const double viscosity = config.lid_velocity / config.reynolds;
-  const double dt = fixed_dt(config, grid);
+  const double viscosity = lid_driven_cavity_viscosity(config);
+  const double dt = lid_driven_cavity_dt(config);
   const double predictor_alpha = 0.5 * viscosity * dt;
   const ProjectionOptions projection_options{
       .dt = dt,
@@ -492,28 +555,19 @@ LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config)
   VelocityField predictor_rhs{grid};
   VelocityField predicted{grid};
   VelocityField corrected{grid};
-  PressureField pressure_total{grid};
   PressureField pressure_correction{grid};
   ScalarField pressure_rhs{grid};
   ProjectionDiagnostics projection{};
-  bool has_previous_advection = false;
-  double time = 0.0;
-  SimulationStepMetrics metrics{.dt = dt};
 
-  velocity.fill(0.0);
-  pressure_total.fill(0.0);
-  pressure_correction.fill(0.0);
-  apply_velocity_boundary_conditions(boundary_conditions, velocity);
-  compute_diffusion_term(velocity, viscosity, diffusion);
-  apply_total_pressure_boundary_conditions(boundary_conditions, diffusion, pressure_total);
-
-  for(int step = 0; step < config.max_steps; ++step) {
-    VelocityField current = velocity;
+  for(int step = 0; step < step_count; ++step) {
+    VelocityField current = state.velocity;
     apply_velocity_boundary_conditions(boundary_conditions, current);
 
     detail::assemble_lid_driven_cavity_predictor_rhs(current,
-                                                     pressure_total,
-                                                     has_previous_advection ? &advection_previous : nullptr,
+                                                     state.pressure_total,
+                                                     state.has_previous_advection
+                                                         ? &state.advection_previous
+                                                         : nullptr,
                                                      config.advection,
                                                      viscosity,
                                                      dt,
@@ -535,25 +589,24 @@ LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config)
         corrected,
         &pressure_rhs);
 
-    axpy_active(pressure_total, pressure_correction, 1.0);
-    axpy_active(pressure_total, pressure_rhs, -0.5 * viscosity * dt);
+    axpy_active(state.pressure_total, pressure_correction, 1.0);
+    axpy_active(state.pressure_total, pressure_rhs, -0.5 * viscosity * dt);
     compute_diffusion_term(corrected, viscosity, diffusion);
-    apply_total_pressure_boundary_conditions(boundary_conditions, diffusion, pressure_total);
+    apply_total_pressure_boundary_conditions(boundary_conditions, diffusion, state.pressure_total);
 
     const CflDiagnostics cfl = compute_advective_cfl(corrected, dt);
-    const double delta = max_velocity_change(velocity, corrected);
+    const double delta = max_velocity_change(state.velocity, corrected);
     if(!std::isfinite(delta) || !std::isfinite(projection.divergence_l2_after)) {
       throw std::runtime_error("lid-driven cavity solve produced a non-finite state");
     }
 
-    velocity = corrected;
-    advection_previous = advection_current;
-    has_previous_advection = true;
-    time += dt;
+    state.velocity = corrected;
+    state.advection_previous = advection_current;
+    state.has_previous_advection = true;
 
-    metrics = SimulationStepMetrics{
-        .step = step + 1,
-        .time = time,
+    state.metrics = SimulationStepMetrics{
+        .step = state.metrics.step + 1,
+        .time = state.metrics.time + dt,
         .dt = dt,
         .max_cfl = cfl.max_cfl,
         .max_velocity_change = delta,
@@ -562,16 +615,35 @@ LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config)
         .pressure_relative_residual = projection.pressure_solve.relative_residual,
     };
 
-    if(metrics.step >= config.min_steps && metrics.max_velocity_change <= config.steady_tolerance) {
+    if(stop_on_steady && steady_stop_reached(config, state.metrics)) {
       break;
     }
   }
+}
 
+}  // namespace
+
+void run_lid_driven_cavity_steps(const LidDrivenCavityConfig& config,
+                                 const int step_count,
+                                 LidDrivenCavityState& state) {
+  advance_lid_driven_cavity_impl(config, step_count, false, state);
+}
+
+LidDrivenCavityResult finalize_lid_driven_cavity_result(const LidDrivenCavityConfig& config,
+                                                        const LidDrivenCavityState& state) {
+  validate_config(config);
+  const Grid grid = make_lid_driven_cavity_grid(config);
+  if(!same_grid(state.grid, grid)) {
+    throw std::invalid_argument("lid-driven cavity state grid does not match the config");
+  }
+
+  const BoundaryConditionSet boundary_conditions = make_lid_driven_cavity_boundary_conditions(config);
+  VelocityField velocity = state.velocity;
   apply_velocity_boundary_conditions(boundary_conditions, velocity);
 
   LidDrivenCavityResult result{
       .config = config,
-      .final_step = metrics,
+      .final_step = state.metrics,
       .u_vertical_centerline = sample_vertical_centerline_u(velocity),
       .v_horizontal_centerline = sample_horizontal_centerline_v(velocity),
   };
@@ -580,6 +652,12 @@ LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config)
     result.validation = validate_lid_driven_cavity_re100(result);
   }
   return result;
+}
+
+LidDrivenCavityResult run_lid_driven_cavity(const LidDrivenCavityConfig& config) {
+  LidDrivenCavityState state = initialize_lid_driven_cavity_state(config);
+  advance_lid_driven_cavity_impl(config, config.max_steps - state.metrics.step, true, state);
+  return finalize_lid_driven_cavity_result(config, state);
 }
 
 }  // namespace solver

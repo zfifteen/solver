@@ -914,7 +914,7 @@ std::string to_string(const PhysicalBoundaryType type) {
       return "periodic";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 std::string to_string(const PressureBoundaryType type) {
@@ -927,7 +927,7 @@ std::string to_string(const PressureBoundaryType type) {
       return "periodic";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 PressureBoundarySet derive_pressure_correction_boundary_conditions(

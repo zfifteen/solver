@@ -31,7 +31,7 @@ void build_poisson_rhs_from_pressure(const PressureField& pressure,
                                      const PressureBoundarySet& boundary_conditions,
                                      ScalarField& rhs);
 
-PoissonSolveDiagnostics solve_pressure_poisson(const ScalarField& rhs,
+[[nodiscard]] PoissonSolveDiagnostics solve_pressure_poisson(const ScalarField& rhs,
                                                const PressureBoundarySet& boundary_conditions,
                                                const ProjectionOptions& options,
                                                PressureField& pressure);

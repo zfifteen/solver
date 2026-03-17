@@ -29,7 +29,7 @@ struct Extent3D {
         return nz;
     }
 
-    return nx;
+    __builtin_unreachable();
   }
 
   [[nodiscard]] constexpr std::size_t cell_count() const noexcept {
@@ -82,7 +82,7 @@ class FieldLayout {
         return FieldLayout(FieldLocation::face_z, grid, Extent3D{grid.nx, grid.ny, grid.nz + 1});
     }
 
-    return FieldLayout(FieldLocation::face_x, grid, Extent3D{grid.nx + 1, grid.ny, grid.nz});
+    __builtin_unreachable();
   }
 
   [[nodiscard]] constexpr FieldLocation location() const noexcept {
@@ -259,7 +259,7 @@ class FieldLayout {
         return Axis::z;
     }
 
-    return Axis::x;
+    __builtin_unreachable();
   }
 
   static constexpr void set_axis_range(const Axis axis,

@@ -36,7 +36,7 @@ inline constexpr Axis boundary_axis(const BoundaryFace face) noexcept {
       return Axis::z;
   }
 
-  return Axis::x;
+  __builtin_unreachable();
 }
 
 inline constexpr bool is_lower_boundary(const BoundaryFace face) noexcept {
@@ -51,7 +51,7 @@ inline constexpr bool is_lower_boundary(const BoundaryFace face) noexcept {
       return false;
   }
 
-  return true;
+  __builtin_unreachable();
 }
 
 struct Grid {
@@ -102,7 +102,7 @@ struct Grid {
         return nz;
     }
 
-    return nx;
+    __builtin_unreachable();
   }
 
   [[nodiscard]] constexpr double spacing(const Axis axis) const noexcept {
@@ -115,7 +115,7 @@ struct Grid {
         return dz;
     }
 
-    return dx;
+    __builtin_unreachable();
   }
 
   [[nodiscard]] double cell_center(const Axis axis, const int cell_index) const {

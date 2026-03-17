@@ -284,6 +284,10 @@ double kinetic_energy(const VelocityField& velocity) {
     }
   }
 
+  if(count == 0) {
+    return 0.0;
+  }
+
   return energy_sum / static_cast<double>(count);
 }
 
@@ -655,7 +659,7 @@ std::string to_string(const ExecutionBackend backend) {
       return "metal";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 ExecutionBackend parse_execution_backend(const std::string& value) {

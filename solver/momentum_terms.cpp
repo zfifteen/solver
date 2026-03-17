@@ -29,7 +29,7 @@ double limiter_value(const FluxLimiter limiter, const double ratio) {
       return (ratio + std::abs(ratio)) / (1.0 + std::abs(ratio));
   }
 
-  return 0.0;
+  __builtin_unreachable();
 }
 
 double safe_ratio(const double numerator, const double denominator) {
@@ -288,7 +288,7 @@ std::string to_string(const AdvectionScheme scheme) {
       return "central";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 std::string to_string(const FluxLimiter limiter) {
@@ -297,7 +297,7 @@ std::string to_string(const FluxLimiter limiter) {
       return "van_leer";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 std::string describe(const AdvectionOptions& options) {

@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <new>
+#include <stdexcept>
 #include <utility>
 
 namespace solver {
@@ -61,6 +63,10 @@ class AlignedBuffer {
     reset();
     if(size == 0) {
       return;
+    }
+
+    if(size > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
+      throw std::length_error("AlignedBuffer::resize: requested size overflows byte count");
     }
 
     data_ = static_cast<T*>(::operator new[](size * sizeof(T), std::align_val_t{Alignment}));

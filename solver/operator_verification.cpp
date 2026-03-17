@@ -52,6 +52,10 @@ double active_l2_error(const Field& field, ValueFn&& exact_value) {
     }
   }
 
+  if(count == 0) {
+    return 0.0;
+  }
+
   return std::sqrt(sum / static_cast<double>(count));
 }
 

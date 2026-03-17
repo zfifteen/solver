@@ -153,6 +153,9 @@ CenterlineExtrema compute_centerline_extrema(const CenterlineProfile& u_profile,
 }
 
 double relative_error(const double value, const double reference) {
+  if(std::abs(reference) == 0.0) {
+    return std::abs(value);
+  }
   return std::abs(value - reference) / std::abs(reference);
 }
 
@@ -356,7 +359,7 @@ std::string to_string(const CenterlineSampleKind line) {
       return "v_horizontal";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 BoundaryConditionSet make_lid_driven_cavity_boundary_conditions(

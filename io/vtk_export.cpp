@@ -67,6 +67,7 @@ void write_mac_fields_vtk(const std::string& path,
     }
   }
 
+  output.flush();
   if(!output.good()) {
     throw std::runtime_error("failed while writing VTK file: " + path);
   }

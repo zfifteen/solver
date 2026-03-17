@@ -649,7 +649,7 @@ std::string to_string(const MultigridCycle cycle) {
       return "v_cycle";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 std::string to_string(const MultigridSmoother smoother) {
@@ -658,7 +658,7 @@ std::string to_string(const MultigridSmoother smoother) {
       return "damped_jacobi";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 MultigridPolicy default_multigrid_policy() {

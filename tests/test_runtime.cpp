@@ -445,7 +445,7 @@ double second_derivative_axis(const solver::StructuredField& input,
              inverse_spacing_squared;
   }
 
-  return 0.0;
+  __builtin_unreachable();
 }
 
 void apply_directional_helmholtz_operator(const solver::FaceField& input,

@@ -148,7 +148,7 @@ double reference_max_speed(const ChannelFlowConfig& config) {
       return config.pressure_drop / (8.0 * config.viscosity);
   }
 
-  return 0.0;
+  __builtin_unreachable();
 }
 
 double fixed_dt(const ChannelFlowConfig& config, const Grid& grid) {
@@ -164,7 +164,7 @@ double exact_streamwise_velocity(const ChannelFlowConfig& config, const double y
       return 0.5 * config.pressure_drop * y * (1.0 - y) / config.viscosity;
   }
 
-  return 0.0;
+  __builtin_unreachable();
 }
 
 double exact_total_pressure(const ChannelFlowConfig& config, const double x) {
@@ -175,7 +175,7 @@ double exact_total_pressure(const ChannelFlowConfig& config, const double x) {
       return config.pressure_drop * (1.0 - x);
   }
 
-  return 0.0;
+  __builtin_unreachable();
 }
 
 void initialize_steady_channel_state(const ChannelFlowConfig& config,
@@ -371,7 +371,7 @@ std::string to_string(const ChannelFlowCase case_kind) {
       return "poiseuille";
   }
 
-  return "unknown";
+  __builtin_unreachable();
 }
 
 std::string describe(const ChannelFlowConfig& config) {

@@ -46,7 +46,7 @@ struct ProjectionDiagnostics {
   PoissonSolveDiagnostics pressure_solve{};
 };
 
-HelmholtzDiagnostics solve_predictor_adi(const VelocityField& rhs,
+[[nodiscard]] HelmholtzDiagnostics solve_predictor_adi(const VelocityField& rhs,
                                          double alpha,
                                          const BoundaryConditionSet& boundary_conditions,
                                          VelocityField& predicted_velocity);
@@ -62,7 +62,7 @@ void correct_velocity(const VelocityField& predicted_velocity,
                       const ProjectionOptions& options,
                       VelocityField& corrected_velocity);
 
-ProjectionDiagnostics project_velocity(const VelocityField& predicted_velocity,
+[[nodiscard]] ProjectionDiagnostics project_velocity(const VelocityField& predicted_velocity,
                                        const BoundaryConditionSet& boundary_conditions,
                                        const ProjectionOptions& options,
                                        PressureField& pressure_correction,

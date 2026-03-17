@@ -41,7 +41,7 @@ double second_derivative(const StructuredField& input,
              inverse_spacing_squared;
   }
 
-  return 0.0;
+  __builtin_unreachable();
 }
 
 void compute_component_laplacian(const StructuredField& input, StructuredField& output) {

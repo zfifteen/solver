@@ -1651,6 +1651,22 @@ void test_channel_flow_poiseuille_profile_validation() {
   require(result.validation.pass, "Poiseuille smoke validation should pass");
 }
 
+void test_channel_flow_rejects_nonconverged_pressure_projection() {
+  solver::ChannelFlowConfig config = solver::load_channel_flow_config(
+      source_path("benchmarks/channel_poiseuille_smoke.cfg"));
+  config.poisson_max_iterations = 1;
+  config.poisson_tolerance = 1.0e-30;
+
+  bool rejected = false;
+  try {
+    static_cast<void>(solver::run_channel_flow(config));
+  } catch(const std::exception& exception) {
+    rejected = std::string(exception.what()).find("channel flow pressure solve did not converge") !=
+               std::string::npos;
+  }
+  require(rejected, "channel flow should reject a non-converged pressure projection");
+}
+
 void test_taylor_green_config_loader_and_boundary_conditions() {
   const solver::TaylorGreenConfig config = solver::load_taylor_green_config(
       source_path("benchmarks/taylor_green_smoke.cfg"));
@@ -1751,6 +1767,23 @@ void test_taylor_green_3d_smoke_validation() {
   require(result.validation.normalized_energy_error <= 1.0e-2,
           "Taylor-Green 3D smoke energy error exceeded the M12 threshold");
   require(result.validation.pass, "Taylor-Green 3D smoke validation should pass");
+}
+
+void test_taylor_green_rejects_nonconverged_pressure_projection() {
+  solver::TaylorGreenConfig config = solver::load_taylor_green_config(
+      source_path("benchmarks/taylor_green_smoke.cfg"));
+  config.poisson_max_iterations = 1;
+  config.poisson_tolerance = 1.0e-30;
+
+  bool rejected = false;
+  try {
+    static_cast<void>(solver::run_taylor_green(config));
+  } catch(const std::exception& exception) {
+    rejected =
+        std::string(exception.what()).find("Taylor-Green pressure solve did not converge") !=
+        std::string::npos;
+  }
+  require(rejected, "Taylor-Green should reject a non-converged pressure projection");
 }
 
 void test_taylor_green_backend_parser_and_metal_rejection() {
@@ -1921,6 +1954,33 @@ void test_taylor_green_metal_cleanup_metadata() {
           "metal cleanup should publish the CPU-equivalent total-pressure update");
 }
 
+void test_taylor_green_metal_rejects_nonconverged_cleanup_projection() {
+  if(!metal_backend_available()) {
+    return;
+  }
+
+  solver::TaylorGreenConfig config = solver::load_taylor_green_config(
+      source_path("benchmarks/taylor_green_3d_smoke.cfg"));
+  config.nx = 16;
+  config.ny = 16;
+  config.nz = 16;
+  config.final_time = 0.005;
+  config.validate_energy = false;
+  config.backend = solver::ExecutionBackend::metal;
+  config.poisson_max_iterations = 20;
+  config.poisson_tolerance = 1.0e-12;
+
+  bool rejected = false;
+  try {
+    static_cast<void>(solver::run_taylor_green(config));
+  } catch(const std::exception& exception) {
+    rejected = std::string(exception.what()).find(
+                   "Taylor-Green metal cleanup pressure solve did not converge") !=
+               std::string::npos;
+  }
+  require(rejected, "metal Taylor-Green should reject a non-converged cleanup projection");
+}
+
 void test_taylor_green_metal_fails_fast_on_nonconverged_pressure_solve() {
   if(!metal_backend_available()) {
     return;
@@ -2007,6 +2067,22 @@ void test_lid_driven_cavity_checkpoint_roundtrip_and_checksum() {
   std::error_code ignore_error;
   std::filesystem::remove(checkpoint_path, ignore_error);
   std::filesystem::remove(corrupted_path, ignore_error);
+}
+
+void test_lid_driven_cavity_rejects_nonconverged_pressure_projection() {
+  solver::LidDrivenCavityConfig config = solver::load_lid_driven_cavity_config(
+      source_path("benchmarks/lid_driven_cavity_smoke.cfg"));
+  config.poisson_max_iterations = 1;
+  config.poisson_tolerance = 1.0e-30;
+
+  bool rejected = false;
+  try {
+    static_cast<void>(solver::run_lid_driven_cavity(config));
+  } catch(const std::exception& exception) {
+    rejected = std::string(exception.what()).find(
+                   "lid-driven cavity pressure solve did not converge") != std::string::npos;
+  }
+  require(rejected, "lid-driven cavity should reject a non-converged pressure projection");
 }
 
 void test_lid_driven_cavity_restart_is_bitwise_deterministic() {
@@ -2279,14 +2355,17 @@ int main() {
     test_channel_flow_config_loader_and_boundary_conditions();
     test_channel_flow_couette_profile_validation();
     test_channel_flow_poiseuille_profile_validation();
+    test_channel_flow_rejects_nonconverged_pressure_projection();
     test_taylor_green_config_loader_and_boundary_conditions();
     test_taylor_green_3d_config_loader_and_boundary_conditions();
     test_taylor_green_smoke_validation();
     test_taylor_green_3d_smoke_validation();
+    test_taylor_green_rejects_nonconverged_pressure_projection();
     test_taylor_green_backend_parser_and_metal_rejection();
     test_taylor_green_cpu_vs_metal_small_3d();
     test_taylor_green_metal_vtk_export();
     test_taylor_green_metal_cleanup_metadata();
+    test_taylor_green_metal_rejects_nonconverged_cleanup_projection();
     test_taylor_green_metal_fails_fast_on_nonconverged_pressure_solve();
     test_lid_driven_cavity_checkpoint_roundtrip_and_checksum();
     test_lid_driven_cavity_checkpoint_rejects_unsupported_version();
@@ -2296,6 +2375,7 @@ int main() {
     test_checkpoint_test_helpers_reject_undersized_header();
     test_lid_driven_cavity_restart_is_bitwise_deterministic();
     test_lid_driven_cavity_vtk_export();
+    test_lid_driven_cavity_rejects_nonconverged_pressure_projection();
     test_lid_driven_cavity_smoke_run();
     test_lid_driven_cavity_reference_validation_gate();
   } catch(const std::exception& exception) {

@@ -69,4 +69,9 @@ ProjectionDiagnostics project_velocity(const VelocityField& predicted_velocity,
                                        VelocityField& corrected_velocity,
                                        ScalarField* pressure_rhs = nullptr);
 
+void require_converged_pressure_projection(const ProjectionDiagnostics& diagnostics,
+                                           const ProjectionOptions& options,
+                                           const char* solver_name,
+                                           int step_index);
+
 }  // namespace solver

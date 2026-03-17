@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1127,6 +1128,22 @@ ProjectionDiagnostics project_velocity(const VelocityField& predicted_velocity,
   }
 
   return diagnostics;
+}
+
+void require_converged_pressure_projection(const ProjectionDiagnostics& diagnostics,
+                                           const ProjectionOptions& options,
+                                           const char* solver_name,
+                                           const int step_index) {
+  if(diagnostics.pressure_solve.converged) {
+    return;
+  }
+
+  std::ostringstream builder;
+  builder << solver_name << " pressure solve did not converge at step " << step_index
+          << " (iterations=" << diagnostics.pressure_solve.iterations
+          << ", relative_residual=" << diagnostics.pressure_solve.relative_residual
+          << ", tolerance=" << options.poisson_tolerance << ")";
+  throw std::runtime_error(builder.str());
 }
 
 }  // namespace solver

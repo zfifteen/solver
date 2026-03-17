@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(solver VERSION 0.1.0 LANGUAGES CXX)
+project(solver VERSION 0.1.0 LANGUAGES CXX OBJCXX)
 
 include(CheckCXXCompilerFlag)
 include(CTest)
@@ -83,6 +83,7 @@ message(STATUS "  -ffast-math: ${SOLVER_HAS_FAST_MATH}")
 add_subdirectory(core)
 add_subdirectory(operators)
 add_subdirectory(linsolve)
+add_subdirectory(metal)
 add_subdirectory(solver)
 add_subdirectory(io)
 add_subdirectory(tools)

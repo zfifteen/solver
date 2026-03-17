@@ -10,6 +10,7 @@ int main(int argc, char** argv) {
   try {
     std::string config_path = "benchmarks/taylor_green_128.cfg";
     std::string vtk_out;
+    std::string backend_override;
 
     bool config_consumed = false;
     for(int index = 1; index < argc; ++index) {
@@ -19,6 +20,11 @@ int main(int argc, char** argv) {
           throw std::runtime_error("missing value for --vtk-out");
         }
         vtk_out = argv[++index];
+      } else if(argument == "--backend") {
+        if(index + 1 >= argc) {
+          throw std::runtime_error("missing value for --backend");
+        }
+        backend_override = argv[++index];
       } else if(!config_consumed && !argument.empty() && argument.rfind("--", 0) != 0) {
         config_path = argument;
         config_consumed = true;
@@ -27,19 +33,28 @@ int main(int argc, char** argv) {
       }
     }
 
-    const solver::TaylorGreenConfig config = solver::load_taylor_green_config(config_path);
+    solver::TaylorGreenConfig config = solver::load_taylor_green_config(config_path);
+    if(!backend_override.empty()) {
+      config.backend = solver::parse_execution_backend(backend_override);
+    }
     solver::TaylorGreenState state = solver::initialize_taylor_green_state(config);
-    solver::run_taylor_green_steps(
-        config,
-        static_cast<int>(std::ceil(config.final_time / solver::taylor_green_dt(config))),
-        state);
+    const solver::TaylorGreenResult result = solver::run_taylor_green(config, &state);
     if(!vtk_out.empty()) {
       solver::io::write_mac_fields_vtk(vtk_out, state.velocity, state.pressure_total);
     }
-    const solver::TaylorGreenResult result = solver::finalize_taylor_green_result(config, state);
 
     std::cout << "config_path: " << config_path << '\n';
     std::cout << "config: " << solver::describe(config) << '\n';
+    std::cout << "backend_used: " << solver::to_string(result.backend_used) << '\n';
+    if(!result.accelerator_name.empty()) {
+      std::cout << "accelerator_name: " << result.accelerator_name << '\n';
+    }
+    if(result.backend_elapsed_seconds > 0.0) {
+      std::cout << "backend_elapsed_seconds: " << result.backend_elapsed_seconds << '\n';
+    }
+    if(result.cleanup_elapsed_seconds > 0.0) {
+      std::cout << "cleanup_elapsed_seconds: " << result.cleanup_elapsed_seconds << '\n';
+    }
     std::cout << "steps: " << result.final_step.step << '\n';
     std::cout << "time: " << result.final_step.time << '\n';
     std::cout << "dt: " << result.final_step.dt << '\n';

@@ -663,29 +663,35 @@ Correct energy decay.
 
 # Milestone 13 — Metal Acceleration (Conditional)
 
-## Only executed if profiling demands it.
+## Executed once profiling showed the 3D Taylor-Green path was the next meaningful acceleration target.
 
-Potential kernels
+Current scoped backend:
 
-pressure Poisson
+3D periodic Taylor-Green only
 
-stencil updates
+explicit backend switch on the existing Taylor-Green executable
+
+CPU path retained as the reference path for comparison and fallback
 
 ---
 
 ## Deliverables
 
-Metal compute kernels
+targeted Metal compute backend in a dedicated module
 
-CPU fallback retained for validation and reproducibility comparison.
+CPU fallback retained for validation and reproducibility comparison
+
+CPU-vs-Metal comparison report in the profiling harness
 
 ---
 
 ## Validation Gate
 
-GPU implementation produces identical numerical results.
+Metal path passes the supported 3D Taylor-Green benchmark gate.
 
-Performance gain measured.
+CPU-vs-Metal velocity / energy agreement measured on a small 3D case.
+
+Performance gain measured on the 3D `256^3` smoke path.
 
 ---
 

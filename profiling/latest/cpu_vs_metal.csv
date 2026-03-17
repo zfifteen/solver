@@ -1,0 +1,3 @@
+case,cpu_status,metal_status,cpu_real_seconds,metal_real_seconds,speedup,velocity_relative_l2_difference,pressure_relative_l2_difference,energy_relative_difference,cpu_divergence_l2,metal_divergence_l2,metal_backend_elapsed_seconds
+taylor_green_3d_64,pass,pass,2.99,2.55,1.1725490196078434,0.0014737782605932148,0.014124723314130014,7.239673410295621e-05,8.73209e-16,3.29058e-16,2.12817
+taylor_green_3d_256_smoke,skipped,skipped,49.76,27.71,1.7957416095272463,1.841303977899935e-05,0.0037974533505313384,0.0,1.305e-15,1.30494e-15,2.88975

@@ -374,19 +374,20 @@ Time-based profiling
 
 # 11. GPU Acceleration (Optional Phase)
 
-Metal acceleration considered **only if profiling proves necessary**.
+Metal acceleration is opened only after profiling establishes that the 3D CPU path is the next meaningful optimization target.
 
-Potential GPU kernels:
+Current v1 GPU scope:
 
-Pressure Poisson solver
+* Metal backend is isolated in a dedicated `metal/` module
+* supported GPU surface is intentionally narrow: 3D periodic Taylor-Green only
+* backend selection is explicit through Taylor-Green config / CLI backend selection
+* CPU path remains the validation source of truth for the general solver
 
-Stencil operators
+Current implementation notes:
 
-Conditions for implementation:
-
-CPU solver fails to reach required throughput.
-
-Metal code remains isolated in a dedicated module.
+* Apple Metal on the target machine does not support `double` kernels, so the first GPU slice uses float working storage on device
+* final result publication performs a CPU projection cleanup before finalization so the reported state still satisfies the strict divergence contract
+* cavity, channel, restart, and general-BC paths remain CPU-only in this milestone
 
 ---
 

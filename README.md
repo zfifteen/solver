@@ -4,13 +4,13 @@ This repository is the beginning of a very specific kind of CFD project: an inco
 
 That combination matters here. A lot of scientific software grows by accumulating features first and worrying about rigor later. This project is trying to do the opposite. The solver is being designed from the outset around a clear numerical method, explicit validation gates, deterministic execution rules, and a roadmap that only moves forward when the previous layer is correct. If the end result works, it should be the kind of codebase a new engineer can open, reason about, benchmark, and trust.
 
-Right now, the repository is still early, but it has moved well past the "just scaffolding" stage. It now contains multiple full simulation and verification paths rather than only isolated numerical building blocks. The codebase has the locked-down build environment, the structured-grid and field-storage layer, the discrete operators, the transport-term kernels, the projection machinery, the matrix-free MGPCG pressure solver, the cavity benchmark path, the generalized boundary-condition system exercised by analytic Couette and Poiseuille verification cases, the restart/output path for the first full driver, the automated broader verification suite with convergence reports, and now a first real profiling layer with microbenchmarks, end-to-end throughput reports, and Instruments-backed hotspot summaries. In other words, this repo is already opinionated about how the solver should be built, validated, measured, and evolved before the deeper optimization and scaling passes arrive.
+Right now, the repository is still early, but it has moved well past the "just scaffolding" stage. It now contains multiple full simulation and verification paths rather than only isolated numerical building blocks. The codebase has the locked-down build environment, the structured-grid and field-storage layer, the discrete operators, the transport-term kernels, the projection machinery, the matrix-free MGPCG pressure solver, the cavity benchmark path, the generalized boundary-condition system exercised by analytic Couette and Poiseuille verification cases, the restart/output path for the first full driver, the automated broader verification suite with convergence reports, the profiling layer with microbenchmarks and Instruments-backed hotspot summaries, and now a first targeted Metal backend for the 3D periodic Taylor-Green path. In other words, this repo is already opinionated about how the solver should be built, validated, measured, and evolved before the deeper production-hardening passes arrive.
 
-If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 12 of that plan.
+If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 13 of that plan.
 
 ## Current Status
 
-The repository is currently at **Milestone 12: 3D Extension**.
+The repository is currently at **Milestone 13: Targeted Metal Acceleration**.
 
 Implemented today:
 
@@ -56,6 +56,10 @@ Implemented today:
 - optimized unchecked storage-access path for the hottest structured-field kernels
 - measured Milestone 10 to Milestone 11 before/after benchmark comparison under `profiling/latest/`
 - 3D Taylor-Green smoke and validation configs plus a short `256^3` execution-path smoke config
+- targeted Metal backend dispatch for the 3D periodic Taylor-Green executable
+- dedicated `metal/` module with Objective-C++ host orchestration and compiled Metal shaders
+- explicit `backend=cpu|metal` Taylor-Green configuration and `--backend` CLI override
+- targeted Metal comparison reporting in the profiling harness
 - a smoke-test executable that reports build/runtime metadata
 - a minimal test executable wired into CTest
 - a simple time-based profiling helper script
@@ -77,7 +81,9 @@ Current implementation note:
 - the current profiling recommendation is based on measured Apple M1 Max runs and currently favors the `benchmark` build with the default unclamped scheduler policy
 - the current M11 pass improves kernel and end-to-end throughput substantially without changing the numerical method
 - the current solver path is still effectively single-threaded, so this milestone closes CPU optimization before deeper thread-scaling work
-- the current Milestone 12 gate is a 3D Taylor-Green validation case plus a short `256^3` execution-path proof, not a claim that every driver is fully 3D today
+- the current Taylor-Green Metal path is intentionally narrow: 3D, fully periodic, Taylor-Green-only
+- the current Metal backend uses float working storage on GPU because Apple Metal does not support `double` kernels on this machine, and it performs a final CPU projection cleanup before result finalization to restore the strict divergence contract
+- the current cavity and channel drivers remain CPU-only
 
 ## Project Goals
 
@@ -141,6 +147,7 @@ solver/
   operators/
   solver/
   linsolve/
+  metal/
   bc/
   io/
   tests/
@@ -154,6 +161,7 @@ What those directories mean in practice right now:
 - `operators/`: second-order structured-grid discrete operators
 - `linsolve/`: matrix-free pressure operator and MGPCG linear-solver implementation
 - `solver/`: transport-term kernels, projection helpers, the cavity driver, the channel-flow verification driver, and the Taylor-Green verification driver
+- `metal/`: the targeted Metal backend for the 3D periodic Taylor-Green path
 - `tools/`: the smoke executable, cavity benchmark executable, channel verification executable, Taylor-Green executable, operator-verification executable, kernel microbenchmark executables, and profiling helper
 - `tests/`: the CTest-backed validation executable
 - `benchmarks/`: cavity plus channel-flow smoke and validation configs
@@ -201,6 +209,7 @@ The current build produces:
 - `solver_linsolve`: matrix-free Poisson application plus MGPCG / geometric multigrid pressure solve
 - `solver_momentum`: advection, diffusion, CFL, projection utilities, the cavity driver, and the channel-flow verification driver layered on top of the linsolve path
 - `solver_io`: checkpoint/restart and VTK export layered on top of the current solver state types
+- `solver_metal`: the targeted Metal backend library for 3D periodic Taylor-Green runs
 - `solver_example`: a smoke-test executable under `build/<profile>/tools/`
 - `solver_cavity`: the lid-driven cavity benchmark executable under `build/<profile>/tools/`
 - `solver_channel`: the Couette / Poiseuille verification executable under `build/<profile>/tools/`
@@ -255,10 +264,22 @@ Run the deterministic Milestone 12 3D Taylor-Green benchmark gate:
 build/deterministic/tools/solver_taylor_green benchmarks/taylor_green_3d_64.cfg
 ```
 
+Run the targeted Metal version of that same 3D gate:
+
+```bash
+build/deterministic/tools/solver_taylor_green benchmarks/taylor_green_3d_64.cfg --backend metal
+```
+
 Run the short `256^3` execution-path smoke:
 
 ```bash
 build/deterministic/tools/solver_taylor_green benchmarks/taylor_green_3d_256_smoke.cfg
+```
+
+Run the short `256^3` targeted Metal smoke:
+
+```bash
+build/benchmark/tools/solver_taylor_green benchmarks/taylor_green_3d_256_smoke.cfg --backend metal
 ```
 
 Generate the full deterministic validation report set:
@@ -315,6 +336,8 @@ Today’s automated coverage still spans the full deterministic validation gate.
 - the MGPCG residual converges to the required relative tolerance and reports the fixed policy metadata
 - the Couette and Poiseuille verification paths load configs, apply the intended BC sets, and pass their analytic profile gates
 - the Taylor-Green verification path loads both 2D and 3D configs, applies the intended periodic/symmetry BC sets, and passes its decay gates
+- the Taylor-Green backend parser accepts explicit CPU vs Metal selection and rejects unsupported Metal cases
+- the targeted Metal Taylor-Green path stays close to the CPU reference on a small 3D comparison case while preserving the analytic benchmark gate on the supported 3D benchmark surface
 - checkpoint round-trips preserve the cavity continuation state bitwise
 - corrupted checkpoints fail checksum verification before restart
 - split cavity runs reproduce uninterrupted deterministic runs bitwise after restart
@@ -357,6 +380,14 @@ For the real Milestone 11 profiling and comparison pass, use:
 
 That harness runs kernel microbenchmarks, end-to-end benchmark timing, QoS policy studies, Instruments Time Profiler captures, and a direct comparison against the stored Milestone 10 M1 Max baseline. On the current Apple M1 Max reference machine, the measured recommendation is still to use the `benchmark` profile with the default unclamped scheduler policy for performance experiments. The current compute-thread recommendation remains `1`, because this first M11 pass focused on hot-kernel efficiency before deeper thread-scaling work.
 
+If you are running that long profiling pass from an attached terminal UI and want to avoid keeping the session live for the whole `xctrace` run, use:
+
+```bash
+tools/profile_suite_background.sh build/benchmark profiling/latest
+```
+
+That helper detaches the profiling suite, writes a timestamped log under `profiling/latest/`, and records the active PID in `profiling/latest/run_profile_suite.pid`.
+
 ## Roadmap
 
 The implementation plan is spelled out in [EXECUTION_ROADMAP_V1.md](EXECUTION_ROADMAP_V1.md). The short version looks like this:
@@ -374,9 +405,9 @@ The implementation plan is spelled out in [EXECUTION_ROADMAP_V1.md](EXECUTION_RO
 11. Milestone 10: performance profiling and baseline hotspot analysis
 12. Milestone 11: CPU optimization with before/after benchmark comparison
 13. Milestone 12: 3D Taylor-Green validation plus a short `256^3` execution-path proof
-14. Milestone 13 and beyond: conditional Metal evaluation, further scaling work, and production hardening
+14. Milestone 14 and beyond: production hardening, broader scaling work, and expansion beyond the first targeted GPU slice
 
-The repository has completed Milestone 12 and is set up for the conditional Milestone 13 decision: keep pushing the CPU path, or add Metal only if new profiling evidence says the CPU route has topped out.
+The repository has completed Milestone 13 with a deliberately narrow Metal backend for 3D periodic Taylor-Green. The next work is no longer deciding whether to open Metal at all; it is deciding how far to generalize the GPU path without diluting the solver’s validation discipline.
 
 The important project rule is simple: **do not advance to the next milestone unless the current validation gate passes**.
 

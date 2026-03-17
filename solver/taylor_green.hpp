@@ -7,6 +7,14 @@
 
 namespace solver {
 
+enum class ExecutionBackend : int {
+  cpu = 0,
+  metal = 1,
+};
+
+std::string to_string(ExecutionBackend backend);
+ExecutionBackend parse_execution_backend(const std::string& value);
+
 struct TaylorGreenConfig {
   int nx = 128;
   int ny = 128;
@@ -17,6 +25,7 @@ struct TaylorGreenConfig {
   int poisson_max_iterations = 200;
   double poisson_tolerance = 1.0e-10;
   bool validate_energy = true;
+  ExecutionBackend backend = ExecutionBackend::cpu;
   AdvectionOptions advection{};
 };
 
@@ -40,7 +49,11 @@ struct TaylorGreenState {
   TaylorGreenStepMetrics metrics{};
   bool has_previous_advection = false;
 
-  explicit TaylorGreenState(const Grid& grid_in);
+  explicit TaylorGreenState(const Grid& grid_in)
+      : grid(grid_in),
+        velocity(grid_in),
+        advection_previous(grid_in),
+        pressure_total(grid_in) {}
 };
 
 struct TaylorGreenValidation {
@@ -53,6 +66,10 @@ struct TaylorGreenValidation {
 
 struct TaylorGreenResult {
   TaylorGreenConfig config{};
+  ExecutionBackend backend_used = ExecutionBackend::cpu;
+  std::string accelerator_name;
+  double backend_elapsed_seconds = 0.0;
+  double cleanup_elapsed_seconds = 0.0;
   TaylorGreenStepMetrics final_step{};
   double initial_kinetic_energy = 0.0;
   double final_kinetic_energy = 0.0;
@@ -71,5 +88,7 @@ void run_taylor_green_steps(const TaylorGreenConfig& config, int step_count, Tay
 [[nodiscard]] TaylorGreenResult finalize_taylor_green_result(const TaylorGreenConfig& config,
                                                              const TaylorGreenState& state);
 [[nodiscard]] TaylorGreenResult run_taylor_green(const TaylorGreenConfig& config);
+[[nodiscard]] TaylorGreenResult run_taylor_green(const TaylorGreenConfig& config,
+                                                 TaylorGreenState* final_state);
 
 }  // namespace solver

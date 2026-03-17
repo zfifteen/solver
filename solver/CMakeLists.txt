@@ -16,4 +16,5 @@ target_link_libraries(solver_momentum
   PUBLIC
     solver_operators
     solver_linsolve
+    solver_metal
 )

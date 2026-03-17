@@ -38,6 +38,18 @@ def run_command(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
+def run_command_stdout_to_path(args: list[str], cwd: Path, stdout_path: Path) -> None:
+    with stdout_path.open("w") as handle:
+        subprocess.run(
+            args,
+            cwd=cwd,
+            check=True,
+            stdout=handle,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+
 def parse_solver_metrics(stdout: str) -> dict[str, str]:
     metrics: dict[str, str] = {}
     for line in stdout.splitlines():
@@ -85,6 +97,85 @@ def parse_time_metrics(stderr: str) -> dict[str, float]:
 def run_with_time(command: list[str], cwd: Path) -> tuple[dict[str, str], dict[str, float]]:
     completed = run_command(["/usr/bin/time", "-lp", *command], cwd)
     return parse_solver_metrics(completed.stdout), parse_time_metrics(completed.stderr)
+
+
+def relative_l2_difference(reference: list[float], candidate: list[float]) -> float:
+    if len(reference) != len(candidate):
+        raise ValueError(
+            f"relative_l2_difference expects equal-length vectors, got {len(reference)} and {len(candidate)}"
+        )
+    numerator = sum((left - right) ** 2 for left, right in zip(reference, candidate))
+    denominator = sum(value * value for value in reference)
+    if denominator <= 0.0:
+        return math.sqrt(numerator)
+    return math.sqrt(numerator / denominator)
+
+
+def read_vtk_fields(path: Path) -> tuple[list[float], list[float]]:
+    velocity_header = "VECTORS velocity double"
+    pressure_header = "SCALARS pressure double 1"
+    velocity: list[float] = []
+    pressure: list[float] = []
+    expected_points: int | None = None
+    section: str | None = None
+
+    with path.open() as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("DIMENSIONS "):
+                parts = line.split()
+                if len(parts) != 4:
+                    raise ValueError(f"invalid DIMENSIONS line in {path}: {line}")
+                nx, ny, nz = (int(value) for value in parts[1:])
+                expected_points = nx * ny * nz
+                continue
+            if line.startswith("POINT_DATA "):
+                parts = line.split()
+                if len(parts) != 2:
+                    raise ValueError(f"invalid POINT_DATA line in {path}: {line}")
+                point_data = int(parts[1])
+                if expected_points is not None and point_data != expected_points:
+                    raise ValueError(
+                        f"VTK POINT_DATA count mismatch in {path}: {point_data} vs {expected_points}"
+                    )
+                expected_points = point_data
+                continue
+            if line == velocity_header:
+                section = "velocity"
+                continue
+            if line == pressure_header:
+                section = "pressure_lookup"
+                continue
+            if section == "pressure_lookup":
+                if line != "LOOKUP_TABLE default":
+                    raise ValueError(f"expected LOOKUP_TABLE default in {path}, found: {line}")
+                section = "pressure"
+                continue
+            if section == "velocity":
+                velocity.extend(float(value) for value in line.split())
+                continue
+            if section == "pressure":
+                pressure.extend(float(value) for value in line.split())
+
+    if expected_points is None:
+        raise ValueError(f"missing DIMENSIONS/POINT_DATA in {path}")
+    if len(velocity) != expected_points * 3:
+        raise ValueError(
+            f"velocity field length mismatch in {path}: expected {expected_points * 3}, got {len(velocity)}"
+        )
+    if len(pressure) != expected_points:
+        raise ValueError(
+            f"pressure field length mismatch in {path}: expected {expected_points}, got {len(pressure)}"
+        )
+    return velocity, pressure
+
+
+def format_optional_metric(value: float, spec: str, suffix: str = "") -> str:
+    if not math.isfinite(value):
+        return "n/a"
+    return format(value, spec) + suffix
 
 
 def write_csv(path: Path, headers: list[str], rows: list[dict[str, object]]) -> None:
@@ -345,9 +436,161 @@ def run_end_to_end_cases(root: Path, build_dir: Path, output_dir: Path) -> list[
     return rows
 
 
-def record_time_profile(root: Path, command: list[str]) -> ET.Element:
+def run_cpu_vs_metal_cases(root: Path, build_dir: Path, output_dir: Path) -> list[dict[str, object]]:
+    tools_dir = root / build_dir / "tools"
+    cases = [
+        {
+            "case": "taylor_green_3d_64",
+            "config": "benchmarks/taylor_green_3d_64.cfg",
+            "expected_status": "pass",
+            "compare_fields": True,
+        },
+        {
+            "case": "taylor_green_3d_256_smoke",
+            "config": "benchmarks/taylor_green_3d_256_smoke.cfg",
+            "expected_status": "skipped",
+            "compare_fields": False,
+        },
+    ]
+
+    rows: list[dict[str, object]] = []
+    for case in cases:
+        cpu_command = [
+            str(tools_dir / "solver_taylor_green"),
+            case["config"],
+        ]
+        metal_command = [
+            str(tools_dir / "solver_taylor_green"),
+            case["config"],
+            "--backend",
+            "metal",
+        ]
+
+        cpu_vtk: Path | None = None
+        metal_vtk: Path | None = None
+        if case["compare_fields"]:
+            cpu_vtk = output_dir / f"{case['case']}_cpu.vtk"
+            metal_vtk = output_dir / f"{case['case']}_metal.vtk"
+            cpu_command.extend(["--vtk-out", str(cpu_vtk)])
+            metal_command.extend(["--vtk-out", str(metal_vtk)])
+
+        cpu_metrics, cpu_time = run_with_time(cpu_command, root)
+        metal_metrics, metal_time = run_with_time(metal_command, root)
+        if cpu_metrics.get("benchmark_status", "") != case["expected_status"]:
+            raise RuntimeError(
+                f"{case['case']} CPU status mismatch: expected {case['expected_status']}, got {cpu_metrics.get('benchmark_status', '')}"
+            )
+        if metal_metrics.get("benchmark_status", "") != case["expected_status"]:
+            raise RuntimeError(
+                f"{case['case']} Metal status mismatch: expected {case['expected_status']}, got {metal_metrics.get('benchmark_status', '')}"
+            )
+
+        velocity_relative_l2_difference = math.nan
+        pressure_relative_l2_difference = math.nan
+        if cpu_vtk is not None and metal_vtk is not None:
+            try:
+                cpu_velocity, cpu_pressure = read_vtk_fields(cpu_vtk)
+                metal_velocity, metal_pressure = read_vtk_fields(metal_vtk)
+                velocity_relative_l2_difference = relative_l2_difference(cpu_velocity, metal_velocity)
+                pressure_relative_l2_difference = relative_l2_difference(cpu_pressure, metal_pressure)
+            finally:
+                cpu_vtk.unlink(missing_ok=True)
+                metal_vtk.unlink(missing_ok=True)
+
+        cpu_energy = float(cpu_metrics["final_kinetic_energy"])
+        metal_energy = float(metal_metrics["final_kinetic_energy"])
+        energy_relative_difference = (
+            abs(metal_energy - cpu_energy) / cpu_energy if cpu_energy > 0.0 else abs(metal_energy - cpu_energy)
+        )
+        metal_real_seconds = metal_time["real_seconds"]
+
+        rows.append(
+            {
+                "case": case["case"],
+                "field_comparison_mode": "full_vtk_diff" if case["compare_fields"] else "metrics_only",
+                "cpu_status": cpu_metrics.get("benchmark_status", ""),
+                "metal_status": metal_metrics.get("benchmark_status", ""),
+                "cpu_real_seconds": cpu_time["real_seconds"],
+                "metal_real_seconds": metal_real_seconds,
+                "speedup": cpu_time["real_seconds"] / metal_real_seconds if metal_real_seconds > 0.0 else math.inf,
+                "velocity_relative_l2_difference": velocity_relative_l2_difference,
+                "pressure_relative_l2_difference": pressure_relative_l2_difference,
+                "energy_relative_difference": energy_relative_difference,
+                "cpu_divergence_l2": float(cpu_metrics["divergence_l2"]),
+                "metal_divergence_l2": float(metal_metrics["divergence_l2"]),
+                "metal_backend_elapsed_seconds": float(metal_metrics.get("backend_elapsed_seconds", "0")),
+                "metal_cleanup_elapsed_seconds": float(metal_metrics.get("cleanup_elapsed_seconds", "0")),
+            }
+        )
+
+    write_csv(
+        output_dir / "cpu_vs_metal.csv",
+        [
+            "case",
+            "field_comparison_mode",
+            "cpu_status",
+            "metal_status",
+            "cpu_real_seconds",
+            "metal_real_seconds",
+            "speedup",
+            "velocity_relative_l2_difference",
+            "pressure_relative_l2_difference",
+            "energy_relative_difference",
+            "cpu_divergence_l2",
+            "metal_divergence_l2",
+            "metal_backend_elapsed_seconds",
+            "metal_cleanup_elapsed_seconds",
+        ],
+        rows,
+    )
+    write_text(
+        output_dir / "cpu_vs_metal.md",
+        "# CPU vs Metal Taylor-Green Comparison\n\n"
+        "These comparisons use the same Taylor-Green executable and configuration surface, with the Metal path selected via `--backend metal`.\n\n"
+        "The current Metal slice is velocity-first: it uses float working storage on device and a final CPU projection cleanup before result publication, so velocity / energy agreement is the primary correctness comparison for this milestone.\n\n"
+        "The `256^3` smoke case is intentionally metrics-only here to avoid materializing giant ASCII VTK snapshots during a long profiling run.\n\n"
+        + markdown_table(
+            [
+                "Case",
+                "Comparison Mode",
+                "CPU Status",
+                "Metal Status",
+                "CPU Seconds",
+                "Metal Seconds",
+                "Speedup",
+                "Velocity Rel L2",
+                "Pressure Rel L2",
+                "Energy Rel Diff",
+                "CPU Div L2",
+                "Metal Div L2",
+            ],
+            [
+                [
+                    str(row["case"]),
+                    str(row["field_comparison_mode"]),
+                    str(row["cpu_status"]),
+                    str(row["metal_status"]),
+                    f'{float(row["cpu_real_seconds"]):.3f}',
+                    f'{float(row["metal_real_seconds"]):.3f}',
+                    format_optional_metric(float(row["speedup"]), ".3f", "x"),
+                    format_optional_metric(float(row["velocity_relative_l2_difference"]), ".6e"),
+                    format_optional_metric(float(row["pressure_relative_l2_difference"]), ".6e"),
+                    format_optional_metric(float(row["energy_relative_difference"]), ".6e"),
+                    format_optional_metric(float(row["cpu_divergence_l2"]), ".6e"),
+                    format_optional_metric(float(row["metal_divergence_l2"]), ".6e"),
+                ]
+                for row in rows
+            ],
+        )
+        + "\n",
+    )
+    return rows
+
+
+def record_time_profile(root: Path, command: list[str]) -> tuple[list[dict[str, object]], dict[str, float]]:
     with tempfile.TemporaryDirectory(prefix="solver_profile_trace_") as temp_dir:
         trace_path = Path(temp_dir) / "run.trace"
+        xml_path = Path(temp_dir) / "time-profile.xml"
         run_command(
             [
                 "xctrace",
@@ -363,7 +606,7 @@ def record_time_profile(root: Path, command: list[str]) -> ET.Element:
             ],
             root,
         )
-        xml = run_command(
+        run_command_stdout_to_path(
             [
                 "xctrace",
                 "export",
@@ -373,8 +616,9 @@ def record_time_profile(root: Path, command: list[str]) -> ET.Element:
                 '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]',
             ],
             root,
-        ).stdout
-    return ET.fromstring(xml)
+            xml_path,
+        )
+        return extract_profile_summary(xml_path)
 
 
 def classify_symbol(symbol: str) -> str:
@@ -393,12 +637,14 @@ def classify_symbol(symbol: str) -> str:
     return "other"
 
 
-def extract_profile_summary(xml_root: ET.Element) -> tuple[list[dict[str, object]], dict[str, float]]:
+def extract_profile_summary(xml_path: Path) -> tuple[list[dict[str, object]], dict[str, float]]:
     core_counts: Counter[str] = Counter()
     symbol_counts: Counter[str] = Counter()
     category_counts: Counter[str] = Counter()
 
-    for row in xml_root.iter("row"):
+    for _event, row in ET.iterparse(xml_path, events=("end",)):
+        if row.tag != "row":
+            continue
         core = row.find("core")
         if core is not None:
             label = core.attrib.get("fmt", "")
@@ -420,10 +666,12 @@ def extract_profile_summary(xml_root: ET.Element) -> tuple[list[dict[str, object
                 symbol = name
                 break
         if symbol is None:
+            row.clear()
             continue
 
         symbol_counts[symbol] += 1
         category_counts[classify_symbol(symbol)] += 1
+        row.clear()
 
     total_symbol_samples = sum(symbol_counts.values()) or 1
     hotspot_rows = [
@@ -465,8 +713,7 @@ def run_policy_study(root: Path, build_dir: Path, output_dir: Path) -> tuple[lis
     hotspot_rows: list[dict[str, object]] = []
     for policy_name, command in commands.items():
         solver_metrics, time_metrics = run_with_time(command, root)
-        profile_xml = record_time_profile(root, command)
-        local_hotspots, core_summary = extract_profile_summary(profile_xml)
+        local_hotspots, core_summary = record_time_profile(root, command)
 
         steps = int(float(solver_metrics["steps"]))
         logical_cells = 128 * 128
@@ -696,11 +943,14 @@ def write_summary(
     throughput_rows: list[dict[str, object]],
     policy_rows: list[dict[str, object]],
     hotspot_rows: list[dict[str, object]],
+    metal_rows: list[dict[str, object]],
 ) -> None:
     best_policy = min(policy_rows, key=lambda row: float(row["real_seconds"]))
     pressure_row = next(row for row in kernel_rows if row["case"] == "pressure_poisson_256x256")
     advection_row = next(row for row in kernel_rows if row["case"] == "advection_256x256")
     taylor_row = next(row for row in throughput_rows if row["case"] == "taylor_green_128")
+    metal_64_row = next(row for row in metal_rows if row["case"] == "taylor_green_3d_64")
+    metal_256_row = next(row for row in metal_rows if row["case"] == "taylor_green_3d_256_smoke")
     m10_baselines = load_baseline_metrics(Path(__file__).resolve().parent / "baselines" / "m10_m1_max.csv")
     comparison_lines: list[str] = []
     for metric, current_value in (
@@ -739,6 +989,8 @@ def write_summary(
             f"- Advection microbenchmark throughput: {float(advection_row['throughput']):.6e} cell updates/s with a {float(advection_row['lower_bound_bandwidth_gbps']):.3f} GB/s lower-bound bandwidth estimate.",
             f"- Pressure microbenchmark throughput: {float(pressure_row['throughput']):.6e} unknown updates/s with {float(pressure_row['average_iterations']):.2f} average iterations.",
             f"- End-to-end Taylor-Green benchmark throughput: {float(taylor_row['cells_per_second']):.6e} cells/s.",
+            f"- Targeted Metal backend result: {float(metal_64_row['speedup']):.3f}x faster than benchmark-profile CPU on `taylor_green_3d_64`, with velocity relative L2 drift {float(metal_64_row['velocity_relative_l2_difference']):.6e}.",
+            f"- Targeted Metal backend smoke throughput: {float(metal_256_row['speedup']):.3f}x faster than benchmark-profile CPU on `taylor_green_3d_256_smoke`.",
             f"- Default-policy hotspot categories were dominated by pressure-solve, predictor/ADI, and advection work, with the top sampled category counts: {dict(top_categories.most_common(4))}.",
             "",
             "## Comparison To Milestone 10 Baseline",
@@ -768,11 +1020,12 @@ def main() -> int:
 
     kernel_rows = run_kernel_microbenchmarks(root, build_dir, output_dir)
     throughput_rows = run_end_to_end_cases(root, build_dir, output_dir)
+    metal_rows = run_cpu_vs_metal_cases(root, build_dir, output_dir)
     policy_rows, hotspot_rows = run_policy_study(root, build_dir, output_dir)
     default_policy = next(row for row in policy_rows if row["policy"] == "default")
     write_thread_scaling_baseline(output_dir, float(default_policy["cells_per_second"]))
     write_baseline_comparison(output_dir, hardware, kernel_rows, throughput_rows)
-    write_summary(output_dir, hardware, kernel_rows, throughput_rows, policy_rows, hotspot_rows)
+    write_summary(output_dir, hardware, kernel_rows, throughput_rows, policy_rows, hotspot_rows, metal_rows)
     return 0
 
 

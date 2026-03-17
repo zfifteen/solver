@@ -4,6 +4,7 @@
 #include "io/checkpoint.hpp"
 #include "io/vtk_export.hpp"
 #include "linsolve/poisson_solver.hpp"
+#include "metal/taylor_green_backend.hpp"
 #include "operators/discrete_operators.hpp"
 #include "solver/channel_flow.hpp"
 #include "solver/lid_driven_cavity.hpp"
@@ -12,6 +13,7 @@
 #include "solver/projection.hpp"
 #include "solver/taylor_green.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -1535,6 +1537,8 @@ void test_taylor_green_config_loader_and_boundary_conditions() {
   require(std::abs(config.viscosity - 0.01) <= 1.0e-12,
           "Taylor-Green smoke viscosity mismatch");
   require(config.validate_energy, "Taylor-Green smoke config should validate the decay");
+  require(config.backend == solver::ExecutionBackend::cpu,
+          "Taylor-Green configs should default to the CPU backend");
 
   const solver::BoundaryConditionSet boundary_conditions =
       solver::make_taylor_green_boundary_conditions(config);
@@ -1564,6 +1568,8 @@ void test_taylor_green_3d_config_loader_and_boundary_conditions() {
   require(config.nx == 40 && config.ny == 40 && config.nz == 40,
           "Taylor-Green 3D smoke config should load the full 3D grid size");
   require(config.validate_energy, "Taylor-Green 3D smoke config should validate the decay");
+  require(config.backend == solver::ExecutionBackend::cpu,
+          "Taylor-Green 3D configs should default to the CPU backend");
 
   const solver::BoundaryConditionSet boundary_conditions =
       solver::make_taylor_green_boundary_conditions(config);
@@ -1623,6 +1629,137 @@ void test_taylor_green_3d_smoke_validation() {
   require(result.validation.normalized_energy_error <= 1.0e-2,
           "Taylor-Green 3D smoke energy error exceeded the M12 threshold");
   require(result.validation.pass, "Taylor-Green 3D smoke validation should pass");
+}
+
+void test_taylor_green_backend_parser_and_metal_rejection() {
+  require(solver::parse_execution_backend("cpu") == solver::ExecutionBackend::cpu,
+          "backend parser should accept cpu");
+  require(solver::parse_execution_backend("metal") == solver::ExecutionBackend::metal,
+          "backend parser should accept metal");
+
+  bool rejected = false;
+  try {
+    solver::TaylorGreenConfig config = solver::load_taylor_green_config(
+        source_path("benchmarks/taylor_green_smoke.cfg"));
+    config.backend = solver::ExecutionBackend::metal;
+    static_cast<void>(solver::run_taylor_green(config));
+  } catch(const std::exception&) {
+    rejected = true;
+  }
+  require(rejected, "metal backend should reject the 2D Taylor-Green path");
+}
+
+void test_taylor_green_cpu_vs_metal_small_3d() {
+  solver::TaylorGreenConfig cpu_config = solver::load_taylor_green_config(
+      source_path("benchmarks/taylor_green_3d_smoke.cfg"));
+  cpu_config.nx = 32;
+  cpu_config.ny = 32;
+  cpu_config.nz = 32;
+  cpu_config.final_time = 0.01;
+  cpu_config.poisson_max_iterations = 160;
+  cpu_config.backend = solver::ExecutionBackend::cpu;
+
+  solver::TaylorGreenConfig metal_config = cpu_config;
+  metal_config.backend = solver::ExecutionBackend::metal;
+
+  solver::TaylorGreenState cpu_state = solver::initialize_taylor_green_state(cpu_config);
+  const solver::TaylorGreenResult cpu_result = solver::run_taylor_green(cpu_config, &cpu_state);
+
+  solver::TaylorGreenState metal_state = solver::initialize_taylor_green_state(metal_config);
+  const solver::TaylorGreenResult metal_result =
+      solver::run_taylor_green(metal_config, &metal_state);
+
+  require(metal_result.backend_used == solver::ExecutionBackend::metal,
+          "metal run should report the metal backend");
+  require(!metal_result.accelerator_name.empty(),
+          "metal run should report the accelerator name");
+  require(metal_result.final_step.divergence_l2 <= 1.0e-10,
+          "metal Taylor-Green run should remain divergence controlled");
+  require(metal_result.validation.pass, "metal Taylor-Green run should pass the analytic gate");
+
+  const double velocity_x_error =
+      relative_active_l2_difference(metal_state.velocity.x, cpu_state.velocity.x);
+  const double velocity_y_error =
+      relative_active_l2_difference(metal_state.velocity.y, cpu_state.velocity.y);
+  const double velocity_z_error =
+      active_l2_difference(metal_state.velocity.z, cpu_state.velocity.z);
+  const double energy_error =
+      std::abs(metal_result.final_kinetic_energy - cpu_result.final_kinetic_energy) /
+      cpu_result.final_kinetic_energy;
+
+  require(std::max({velocity_x_error, velocity_y_error, velocity_z_error}) <= 5.0e-4,
+          "metal velocity field drifted too far from the CPU reference");
+  require(energy_error <= 1.0e-4,
+          "metal kinetic energy drifted too far from the CPU reference");
+}
+
+void test_taylor_green_metal_vtk_export() {
+  solver::TaylorGreenConfig config = solver::load_taylor_green_config(
+      source_path("benchmarks/taylor_green_3d_smoke.cfg"));
+  config.nx = 16;
+  config.ny = 16;
+  config.nz = 16;
+  config.final_time = 0.005;
+  config.validate_energy = false;
+  config.backend = solver::ExecutionBackend::metal;
+
+  solver::TaylorGreenState state = solver::initialize_taylor_green_state(config);
+  static_cast<void>(solver::run_taylor_green(config, &state));
+
+  const std::filesystem::path vtk_path = temp_path("solver_taylor_green_metal.vtk");
+  solver::io::write_mac_fields_vtk(vtk_path.string(), state.velocity, state.pressure_total);
+
+  std::ifstream input(vtk_path);
+  const std::string contents((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  require(contents.find("# vtk DataFile Version 3.0") != std::string::npos,
+          "metal VTK export should write the legacy VTK header");
+  require(contents.find("VECTORS velocity double") != std::string::npos,
+          "metal VTK export should contain the velocity vector field");
+  require(contents.find("SCALARS pressure double 1") != std::string::npos,
+          "metal VTK export should contain the pressure scalar field");
+
+  std::error_code ignore_error;
+  std::filesystem::remove(vtk_path, ignore_error);
+}
+
+void test_taylor_green_metal_cleanup_metadata() {
+  solver::TaylorGreenConfig config = solver::load_taylor_green_config(
+      source_path("benchmarks/taylor_green_3d_smoke.cfg"));
+  config.nx = 16;
+  config.ny = 16;
+  config.nz = 16;
+  config.final_time = 0.005;
+  config.validate_energy = false;
+  config.backend = solver::ExecutionBackend::metal;
+
+  const solver::metal::TaylorGreenMetalRun raw_run = solver::metal::run_taylor_green(config);
+  const solver::BoundaryConditionSet boundary_conditions =
+      solver::make_taylor_green_boundary_conditions(config);
+  const solver::ProjectionOptions projection_options{
+      .dt = raw_run.state.metrics.dt,
+      .density = 1.0,
+      .poisson_max_iterations = config.poisson_max_iterations,
+      .poisson_tolerance = config.poisson_tolerance,
+  };
+  solver::PressureField pressure_correction{raw_run.state.grid};
+  solver::VelocityField corrected{raw_run.state.grid};
+  const solver::ProjectionDiagnostics cleanup = solver::project_velocity(
+      raw_run.state.velocity,
+      boundary_conditions,
+      projection_options,
+      pressure_correction,
+      corrected);
+
+  const solver::TaylorGreenResult result = solver::run_taylor_green(config);
+  require(result.backend_elapsed_seconds > 0.0,
+          "metal result should expose backend elapsed time");
+  require(result.cleanup_elapsed_seconds > 0.0,
+          "metal result should expose cleanup elapsed time");
+  require(result.final_step.pressure_iterations == cleanup.pressure_solve.iterations,
+          "metal final-step iterations should report the cleanup projection solve");
+  require(std::abs(result.final_step.pressure_relative_residual -
+                   cleanup.pressure_solve.relative_residual) <= 1.0e-12,
+          "metal final-step residual should report the cleanup projection solve");
 }
 
 void test_lid_driven_cavity_checkpoint_roundtrip_and_checksum() {
@@ -1874,6 +2011,10 @@ int main() {
     test_taylor_green_3d_config_loader_and_boundary_conditions();
     test_taylor_green_smoke_validation();
     test_taylor_green_3d_smoke_validation();
+    test_taylor_green_backend_parser_and_metal_rejection();
+    test_taylor_green_cpu_vs_metal_small_3d();
+    test_taylor_green_metal_vtk_export();
+    test_taylor_green_metal_cleanup_metadata();
     test_lid_driven_cavity_checkpoint_roundtrip_and_checksum();
     test_lid_driven_cavity_restart_is_bitwise_deterministic();
     test_lid_driven_cavity_vtk_export();

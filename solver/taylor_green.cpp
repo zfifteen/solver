@@ -1,8 +1,10 @@
 #include "solver/taylor_green.hpp"
 
+#include "metal/taylor_green_backend.hpp"
 #include "operators/discrete_operators.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -39,6 +41,16 @@ bool parse_bool(const std::string& value) {
     return false;
   }
   throw std::runtime_error("invalid boolean value: " + value);
+}
+
+ExecutionBackend parse_backend_value(const std::string& value) {
+  if(value == "cpu") {
+    return ExecutionBackend::cpu;
+  }
+  if(value == "metal") {
+    return ExecutionBackend::metal;
+  }
+  throw std::runtime_error("invalid Taylor-Green backend value: " + value);
 }
 
 void validate_config(const TaylorGreenConfig& config) {
@@ -457,6 +469,8 @@ TaylorGreenConfig load_taylor_green_config(const std::string& path) {
       config.poisson_tolerance = std::stod(value);
     } else if(key == "validate_energy") {
       config.validate_energy = parse_bool(value);
+    } else if(key == "backend") {
+      config.backend = parse_backend_value(value);
     } else {
       throw std::runtime_error("unsupported Taylor-Green config key: " + key);
     }
@@ -475,6 +489,7 @@ std::string describe(const TaylorGreenConfig& config) {
           << ", poisson_max_iterations=" << config.poisson_max_iterations
           << ", poisson_tolerance=" << config.poisson_tolerance
           << ", validate_energy=" << (config.validate_energy ? "true" : "false")
+          << ", backend=" << to_string(config.backend)
           << ", advection=" << describe(config.advection);
   return builder.str();
 }
@@ -500,12 +515,6 @@ BoundaryConditionSet make_taylor_green_boundary_conditions(const TaylorGreenConf
   }
   return boundary_conditions;
 }
-
-TaylorGreenState::TaylorGreenState(const Grid& grid_in)
-    : grid(grid_in),
-      velocity(grid_in),
-      advection_previous(grid_in),
-      pressure_total(grid_in) {}
 
 double taylor_green_dt(const TaylorGreenConfig& config) {
   validate_config(config);
@@ -627,6 +636,7 @@ TaylorGreenResult finalize_taylor_green_result(const TaylorGreenConfig& config,
   validate_config(config);
   TaylorGreenResult result{
       .config = config,
+      .backend_used = config.backend,
       .final_step = state.metrics,
       .initial_kinetic_energy = exact_kinetic_energy(config, 0.0),
       .final_kinetic_energy = kinetic_energy(state.velocity),
@@ -637,10 +647,86 @@ TaylorGreenResult finalize_taylor_green_result(const TaylorGreenConfig& config,
   return result;
 }
 
-TaylorGreenResult run_taylor_green(const TaylorGreenConfig& config) {
+std::string to_string(const ExecutionBackend backend) {
+  switch(backend) {
+    case ExecutionBackend::cpu:
+      return "cpu";
+    case ExecutionBackend::metal:
+      return "metal";
+  }
+
+  return "unknown";
+}
+
+ExecutionBackend parse_execution_backend(const std::string& value) {
+  return parse_backend_value(value);
+}
+
+TaylorGreenResult run_taylor_green(const TaylorGreenConfig& config,
+                                   TaylorGreenState* final_state) {
+  validate_config(config);
+  if(config.backend == ExecutionBackend::metal) {
+    metal::TaylorGreenMetalRun metal_run = metal::run_taylor_green(config);
+    double cleanup_elapsed_seconds = 0.0;
+    if(metal_run.state.metrics.step > 0) {
+      const BoundaryConditionSet boundary_conditions =
+          make_taylor_green_boundary_conditions(config);
+      const ProjectionOptions projection_options{
+          .dt = metal_run.state.metrics.dt,
+          .density = 1.0,
+          .poisson_max_iterations = config.poisson_max_iterations,
+          .poisson_tolerance = config.poisson_tolerance,
+      };
+      PressureField pressure_correction{metal_run.state.grid};
+      VelocityField corrected{metal_run.state.grid};
+      pressure_correction.fill(0.0);
+      corrected.fill(0.0);
+
+      const auto cleanup_started = std::chrono::steady_clock::now();
+      const ProjectionDiagnostics cleanup = project_velocity(
+          metal_run.state.velocity,
+          boundary_conditions,
+          projection_options,
+          pressure_correction,
+          corrected);
+      cleanup_elapsed_seconds =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - cleanup_started).count();
+      metal_run.state.velocity = corrected;
+      axpy_active(metal_run.state.pressure_total, pressure_correction, 1.0);
+      metal_run.state.metrics.max_cfl =
+          compute_advective_cfl(corrected, metal_run.state.metrics.dt).max_cfl;
+      metal_run.state.metrics.divergence_l2 = cleanup.divergence_l2_after;
+      metal_run.state.metrics.max_divergence_l2 =
+          std::max(metal_run.state.metrics.max_divergence_l2, cleanup.divergence_l2_after);
+      metal_run.state.metrics.pressure_iterations = cleanup.pressure_solve.iterations;
+      metal_run.state.metrics.pressure_relative_residual =
+          cleanup.pressure_solve.relative_residual;
+    }
+
+    TaylorGreenResult result = finalize_taylor_green_result(config, metal_run.state);
+    result.backend_used = ExecutionBackend::metal;
+    result.accelerator_name = metal_run.device_name;
+    result.backend_elapsed_seconds = metal_run.elapsed_seconds;
+    result.cleanup_elapsed_seconds = cleanup_elapsed_seconds;
+    if(final_state != nullptr) {
+      *final_state = metal_run.state;
+    }
+    return result;
+  }
+
   TaylorGreenState state = initialize_taylor_green_state(config);
   run_taylor_green_steps(config, static_cast<int>(std::ceil(config.final_time / taylor_green_dt(config))), state);
-  return finalize_taylor_green_result(config, state);
+  TaylorGreenResult result = finalize_taylor_green_result(config, state);
+  result.backend_used = ExecutionBackend::cpu;
+  result.accelerator_name = "cpu";
+  if(final_state != nullptr) {
+    *final_state = state;
+  }
+  return result;
+}
+
+TaylorGreenResult run_taylor_green(const TaylorGreenConfig& config) {
+  return run_taylor_green(config, nullptr);
 }
 
 }  // namespace solver

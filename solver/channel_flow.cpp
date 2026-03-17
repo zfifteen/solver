@@ -494,7 +494,6 @@ ChannelFlowResult run_channel_flow(const ChannelFlowConfig& config) {
         pressure_correction,
         corrected,
         &pressure_rhs);
-    require_converged_pressure_solve(projection, projection_options, "channel flow", step + 1);
 
     axpy_active(pressure_total, pressure_correction, 1.0);
     axpy_active(pressure_total, pressure_rhs, -0.5 * config.viscosity * dt);

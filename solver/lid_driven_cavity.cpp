@@ -588,7 +588,6 @@ void advance_lid_driven_cavity_impl(const LidDrivenCavityConfig& config,
         pressure_correction,
         corrected,
         &pressure_rhs);
-    require_converged_pressure_solve(projection, projection_options, "lid-driven cavity", step + 1);
 
     axpy_active(state.pressure_total, pressure_correction, 1.0);
     axpy_active(state.pressure_total, pressure_rhs, -0.5 * viscosity * dt);

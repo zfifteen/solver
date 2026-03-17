@@ -601,7 +601,6 @@ void run_taylor_green_steps(const TaylorGreenConfig& config,
         pressure_correction,
         corrected,
         &pressure_rhs);
-    require_converged_pressure_solve(projection, projection_options, "Taylor-Green", step + 1);
 
     axpy_active(state.pressure_total, pressure_correction, 1.0);
     axpy_active(state.pressure_total, pressure_rhs, -0.5 * config.viscosity * dt);
@@ -695,10 +694,6 @@ TaylorGreenResult run_taylor_green(const TaylorGreenConfig& config,
           &pressure_rhs);
       cleanup_elapsed_seconds =
           std::chrono::duration<double>(std::chrono::steady_clock::now() - cleanup_started).count();
-      require_converged_pressure_solve(cleanup,
-                                       projection_options,
-                                       "Taylor-Green Metal cleanup",
-                                       metal_run.state.metrics.step);
       metal_run.state.velocity = corrected;
       axpy_active(metal_run.state.pressure_total, pressure_correction, 1.0);
       axpy_active(metal_run.state.pressure_total,

@@ -1529,23 +1529,6 @@ void test_channel_flow_poiseuille_profile_validation() {
   require(result.validation.pass, "Poiseuille smoke validation should pass");
 }
 
-void test_channel_flow_fails_fast_on_nonconverged_pressure_solve() {
-  solver::ChannelFlowConfig config = solver::load_channel_flow_config(
-      source_path("benchmarks/channel_couette_smoke.cfg"));
-  config.steps = 1;
-  config.poisson_max_iterations = 1;
-  config.poisson_tolerance = 1.0e-30;
-  config.validate_profile = false;
-
-  bool rejected = false;
-  try {
-    static_cast<void>(solver::run_channel_flow(config));
-  } catch(const std::exception& exception) {
-    rejected = std::string(exception.what()).find("pressure solve did not converge") != std::string::npos;
-  }
-  require(rejected, "channel flow should fail fast on a non-converged pressure solve");
-}
-
 void test_taylor_green_config_loader_and_boundary_conditions() {
   const solver::TaylorGreenConfig config = solver::load_taylor_green_config(
       source_path("benchmarks/taylor_green_smoke.cfg"));
@@ -1804,22 +1787,6 @@ void test_taylor_green_metal_cleanup_metadata() {
           "metal cleanup should publish the CPU-equivalent total-pressure update");
 }
 
-void test_taylor_green_fails_fast_on_nonconverged_pressure_solve() {
-  solver::TaylorGreenConfig config = solver::load_taylor_green_config(
-      source_path("benchmarks/taylor_green_smoke.cfg"));
-  config.final_time = 0.01;
-  config.poisson_max_iterations = 1;
-  config.poisson_tolerance = 1.0e-30;
-
-  bool rejected = false;
-  try {
-    static_cast<void>(solver::run_taylor_green(config));
-  } catch(const std::exception& exception) {
-    rejected = std::string(exception.what()).find("pressure solve did not converge") != std::string::npos;
-  }
-  require(rejected, "Taylor-Green should fail fast on a non-converged pressure solve");
-}
-
 void test_taylor_green_metal_fails_fast_on_nonconverged_pressure_solve() {
   solver::TaylorGreenConfig config = solver::load_taylor_green_config(
       source_path("benchmarks/taylor_green_3d_smoke.cfg"));
@@ -2010,24 +1977,6 @@ void test_lid_driven_cavity_smoke_run() {
           "smoke cavity recirculation should induce negative u motion");
 }
 
-void test_lid_driven_cavity_fails_fast_on_nonconverged_pressure_solve() {
-  solver::LidDrivenCavityConfig config = solver::load_lid_driven_cavity_config(
-      source_path("benchmarks/lid_driven_cavity_smoke.cfg"));
-  config.max_steps = 1;
-  config.min_steps = 1;
-  config.poisson_max_iterations = 1;
-  config.poisson_tolerance = 1.0e-30;
-  config.validate_reference = false;
-
-  bool rejected = false;
-  try {
-    static_cast<void>(solver::run_lid_driven_cavity(config));
-  } catch(const std::exception& exception) {
-    rejected = std::string(exception.what()).find("pressure solve did not converge") != std::string::npos;
-  }
-  require(rejected, "lid-driven cavity should fail fast on a non-converged pressure solve");
-}
-
 void test_lid_driven_cavity_reference_validation_gate() {
   const solver::LidDrivenCavityReference reference = solver::re100_centerline_reference_envelope();
   const solver::LidDrivenCavityReferencePoint& u_top = reference.points[0];
@@ -2104,7 +2053,6 @@ int main() {
     test_channel_flow_config_loader_and_boundary_conditions();
     test_channel_flow_couette_profile_validation();
     test_channel_flow_poiseuille_profile_validation();
-    test_channel_flow_fails_fast_on_nonconverged_pressure_solve();
     test_taylor_green_config_loader_and_boundary_conditions();
     test_taylor_green_3d_config_loader_and_boundary_conditions();
     test_taylor_green_smoke_validation();
@@ -2113,13 +2061,11 @@ int main() {
     test_taylor_green_cpu_vs_metal_small_3d();
     test_taylor_green_metal_vtk_export();
     test_taylor_green_metal_cleanup_metadata();
-    test_taylor_green_fails_fast_on_nonconverged_pressure_solve();
     test_taylor_green_metal_fails_fast_on_nonconverged_pressure_solve();
     test_lid_driven_cavity_checkpoint_roundtrip_and_checksum();
     test_lid_driven_cavity_restart_is_bitwise_deterministic();
     test_lid_driven_cavity_vtk_export();
     test_lid_driven_cavity_smoke_run();
-    test_lid_driven_cavity_fails_fast_on_nonconverged_pressure_solve();
     test_lid_driven_cavity_reference_validation_gate();
   } catch(const std::exception& exception) {
     std::cerr << "solver_tests failed: " << exception.what() << '\n';

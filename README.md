@@ -405,9 +405,11 @@ The implementation plan is spelled out in [EXECUTION_ROADMAP_V1.md](EXECUTION_RO
 11. Milestone 10: performance profiling and baseline hotspot analysis
 12. Milestone 11: CPU optimization with before/after benchmark comparison
 13. Milestone 12: 3D Taylor-Green validation plus a short `256^3` execution-path proof
-14. Milestone 14 and beyond: production hardening, broader scaling work, and expansion beyond the first targeted GPU slice
+14. Milestone 14 and beyond: production hardening, a fast CI gate plus a manual deterministic threshold gate, broader scaling work, and expansion beyond the first targeted GPU slice
 
 The repository has completed Milestone 13 with a deliberately narrow Metal backend for 3D periodic Taylor-Green. The next work is no longer deciding whether to open Metal at all; it is deciding how far to generalize the GPU path without diluting the solver’s validation discipline.
+
+For Milestone 14, GitHub Actions is intentionally limited to fast deterministic build-and-test checks. The full deterministic benchmark-threshold gate is a manual developer workflow run through `validation/run_validation_suite.py`, not a default CI job.
 
 The important project rule is simple: **do not advance to the next milestone unless the current validation gate passes**.
 

@@ -1,7 +1,8 @@
 # Deterministic Benchmark Suite
 
 This file documents the deterministic benchmark suite that Milestone 14 treats
-as the manual regression gate.
+as the manual regression gate. This manual suite is the Milestone 14
+benchmark-threshold gate; it is intentionally not enforced by GitHub Actions.
 
 The source of truth is
 [`benchmark_suite.csv`](./benchmark_suite.csv).

@@ -713,17 +713,17 @@ regression tests
 
 checkpoint compatibility tests
 
-benchmark-threshold enforcement in CI
+manual deterministic benchmark-threshold gate
 
 ---
 
 ## Deliverables
 
-CI test pipeline
+fast CI test pipeline
 
 regression dataset
 
-documented benchmark suite.
+documented benchmark suite and manual threshold gate.
 
 ---
 

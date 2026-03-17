@@ -1,2 +1,2 @@
 compute_threads,cells_per_second,status,note
-1,1049600.0,baseline_only,Current solver path remains single-threaded after the first M11 optimization pass; deeper thread scaling is still future work.
+1,1083458.064516129,baseline_only,Current solver path remains single-threaded after the first M11 optimization pass; deeper thread scaling is still future work.

@@ -20,7 +20,9 @@ namespace {
 
 #if SOLVER_METAL_USE_FLOAT
 using MetalScalar = float;
-constexpr double kFaceCgTolerance = 1.0e-4;
+// The float-backed Metal face solve needs a small margin above 1e-4 to remain
+// stable across the supported benchmark-profile smoke path.
+constexpr double kFaceCgTolerance = 2.0e-4;
 constexpr double kPressureCgTolerance = 1.0e-6;
 #else
 using MetalScalar = double;

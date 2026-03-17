@@ -6,11 +6,11 @@ That combination matters here. A lot of scientific software grows by accumulatin
 
 Right now, the repository is still early, but it has moved well past the "just scaffolding" stage. It now contains multiple full simulation and verification paths rather than only isolated numerical building blocks. The codebase has the locked-down build environment, the structured-grid and field-storage layer, the discrete operators, the transport-term kernels, the projection machinery, the matrix-free MGPCG pressure solver, the cavity benchmark path, the generalized boundary-condition system exercised by analytic Couette and Poiseuille verification cases, the restart/output path for the first full driver, the automated broader verification suite with convergence reports, the profiling layer with microbenchmarks and Instruments-backed hotspot summaries, and now a first targeted Metal backend for the 3D periodic Taylor-Green path. In other words, this repo is already opinionated about how the solver should be built, validated, measured, and evolved before the deeper production-hardening passes arrive.
 
-If you are reading this as a developer, the shortest useful summary is: this project is building toward a production-grade, Apple-Silicon-native incompressible flow solver, and the repository currently reflects Milestone 13 of that plan.
+If you are reading this as a developer, the shortest useful summary is: this project has reached a Milestone 15 release-candidate state for its current supported scope: Apple Silicon, deterministic CPU-first validation, cavity restart coverage, and a deliberately narrow 3D Metal Taylor-Green slice.
 
 ## Current Status
 
-The repository is currently at **Milestone 13: Targeted Metal Acceleration**.
+The repository is currently at **Milestone 15: Release Candidate**.
 
 Implemented today:
 
@@ -63,6 +63,7 @@ Implemented today:
 - a smoke-test executable that reports build/runtime metadata
 - a minimal test executable wired into CTest
 - a simple time-based profiling helper script
+- a deterministic release-candidate wrapper script for the supported validation surface
 - scaffolded module layout for later solver milestones beyond the infrastructure layer
 
 What is not implemented yet:
@@ -70,6 +71,7 @@ What is not implemented yet:
 - broader 3D full-case coverage beyond the Taylor-Green path
 - deeper solver optimization and true multithreaded scaling beyond the current first M11 pass
 - broader 3D and higher-Reynolds-number verification beyond the current reference suite
+- release packaging, version tagging, and cross-platform distribution support
 
 Current implementation note:
 
@@ -121,7 +123,7 @@ This narrow scope is deliberate. The project is optimizing for correctness and a
 
 ## Numerical Direction
 
-The full solver architecture is described in [TECH-SPEC.md](TECH-SPEC.md), but the current direction is already fixed:
+The full solver architecture is described in [docs/TECH-SPEC.md](docs/TECH-SPEC.md), but the current direction is already fixed:
 
 - discretization: finite volume method on a staggered MAC grid
 - convective form: conservative `∇·(u⊗u)` form
@@ -170,7 +172,7 @@ What those directories mean in practice right now:
 - `validation/`: the automated Milestone 9 harness plus the latest generated reports and plots
 - `profiling/`: the automated Milestone 11 harness, stored M10 baseline data, and the latest generated profiling reports and plots
 
-The technical and roadmap documents live at the repository root and currently act as the primary design references.
+The technical and roadmap documents live under `docs/` and act as the primary design references.
 
 ## Build Profiles
 
@@ -288,6 +290,12 @@ Generate the full deterministic validation report set:
 ./validation/run_validation_suite.py --build-dir build/deterministic --output-dir validation/latest
 ```
 
+Run the deterministic release-candidate suite wrapper:
+
+```bash
+tools/run_release_candidate_suite.sh
+```
+
 Generate the full Milestone 11 profiling and comparison report set:
 
 ```bash
@@ -345,14 +353,14 @@ Today’s GitHub Actions coverage is intentionally limited to the fast determini
 - the cavity smoke run remains stable and divergence controlled
 - the cavity validation harness samples the named reference points correctly and rejects out-of-range results
 
-The broader verification harness that closes Milestone 9 lives outside `solver_tests` in `validation/run_validation_suite.py`. It is run manually when we want full numerical evidence rather than on every GitHub Actions run. Its generated outputs in `validation/latest/` currently include:
+The broader verification harness that now serves as the Milestone 15 deterministic benchmark-results source of truth lives outside `solver_tests` in `validation/run_validation_suite.py`. It is run manually when we want full numerical evidence rather than on every GitHub Actions run. Its generated outputs in `validation/latest/` currently include:
 
 - operator spatial-convergence tables and SVG plots
 - Taylor-Green temporal self-convergence tables and SVG plots
 - deterministic benchmark-threshold summaries for Couette, Poiseuille, lid-driven cavity, and both 2D and 3D Taylor-Green cases
 - mass-conservation summaries across the reference cases
 
-Milestone 11 profiling and optimization evidence also lives outside `solver_tests`, in `profiling/run_profile_suite.py`. Its generated outputs in `profiling/latest/` currently include:
+The performance-report evidence for the release candidate also lives outside `solver_tests`, in `profiling/run_profile_suite.py`. Its generated outputs in `profiling/latest/` currently include:
 
 - hardware and platform summaries for the active Apple Silicon machine
 - advection and pressure-solver kernel microbenchmark tables and throughput plots
@@ -390,7 +398,7 @@ That helper detaches the profiling suite, writes a timestamped log under `profil
 
 ## Roadmap
 
-The implementation plan is spelled out in [EXECUTION_ROADMAP_V1.md](EXECUTION_ROADMAP_V1.md). The short version looks like this:
+The implementation plan is spelled out in [docs/EXECUTION_ROADMAP_V1.md](docs/EXECUTION_ROADMAP_V1.md). The short version looks like this:
 
 1. Milestone 0: lock the environment, build system, and validation scaffolding
 2. Milestone 1: add grid, field, indexing, and ghost-cell infrastructure
@@ -405,11 +413,10 @@ The implementation plan is spelled out in [EXECUTION_ROADMAP_V1.md](EXECUTION_RO
 11. Milestone 10: performance profiling and baseline hotspot analysis
 12. Milestone 11: CPU optimization with before/after benchmark comparison
 13. Milestone 12: 3D Taylor-Green validation plus a short `256^3` execution-path proof
-14. Milestone 14 and beyond: production hardening, a fast CI gate plus a manual deterministic threshold gate, broader scaling work, and expansion beyond the first targeted GPU slice
+14. Milestone 14: production hardening, a fast CI gate, and a manual deterministic threshold gate
+15. Milestone 15: release-candidate documentation, fresh benchmark/performance evidence, restart proof, and a reproducible deterministic run procedure
 
-The repository has completed Milestone 13 with a deliberately narrow Metal backend for 3D periodic Taylor-Green. The next work is no longer deciding whether to open Metal at all; it is deciding how far to generalize the GPU path without diluting the solver’s validation discipline.
-
-For Milestone 14, GitHub Actions is intentionally limited to fast deterministic build-and-test checks. The full deterministic benchmark-threshold gate is a manual developer workflow run through `validation/run_validation_suite.py`, not a default CI job.
+The repository is now in its Milestone 15 release-candidate phase. GitHub Actions remains intentionally limited to the fast deterministic build-and-test gate. The full deterministic benchmark-threshold gate and the profiling evidence pass remain manual developer workflows run through `validation/run_validation_suite.py` and `profiling/run_profile_suite.py`.
 
 The important project rule is simple: **do not advance to the next milestone unless the current validation gate passes**.
 
@@ -417,10 +424,10 @@ The important project rule is simple: **do not advance to the next milestone unl
 
 The two main design documents in this repository are:
 
-- [TECH-SPEC.md](TECH-SPEC.md): the numerical, architectural, determinism, and validation contract for the solver
-- [EXECUTION_ROADMAP_V1.md](EXECUTION_ROADMAP_V1.md): the milestone-by-milestone implementation sequence and validation gates
+- [docs/TECH-SPEC.md](docs/TECH-SPEC.md): the numerical, architectural, determinism, and validation contract for the solver
+- [docs/EXECUTION_ROADMAP_V1.md](docs/EXECUTION_ROADMAP_V1.md): the milestone-by-milestone implementation sequence and validation gates
 
-If you need to understand why the repository is structured the way it is, start with those two files.
+If you need to understand why the repository is structured the way it is, start with those two files, then read [docs/DETERMINISTIC_RUNBOOK.md](docs/DETERMINISTIC_RUNBOOK.md) and [docs/RELEASE_CANDIDATE.md](docs/RELEASE_CANDIDATE.md) for the current RC operating procedure and acceptance state.
 
 ## License
 

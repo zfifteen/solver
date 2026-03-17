@@ -6,9 +6,9 @@
 <text x="450.0" y="494" text-anchor="middle" font-size="16" font-family="Menlo, monospace">Kernel</text>
 <text x="26" y="260.0" transform="rotate(-90 26 260.0)" text-anchor="middle" font-size="16" font-family="Menlo, monospace">Throughput</text>
 <rect x="167.0" y="60.0" width="231.0" height="360.0" fill="#0f766e" opacity="0.9"/>
-<text x="282.5" y="52.0" text-anchor="middle" font-size="13" font-family="Menlo, monospace">1.33e+07</text>
+<text x="282.5" y="52.0" text-anchor="middle" font-size="13" font-family="Menlo, monospace">1.47e+07</text>
 <text x="282.5" y="442" text-anchor="middle" font-size="13" font-family="Menlo, monospace">advection_256x256</text>
-<rect x="552.0" y="374.77909663628355" width="231.0" height="45.220903363716424" fill="#b45309" opacity="0.9"/>
-<text x="667.5" y="366.77909663628355" text-anchor="middle" font-size="13" font-family="Menlo, monospace">1.67e+06</text>
+<rect x="552.0" y="372.8858224447429" width="231.0" height="47.11417755525706" fill="#b45309" opacity="0.9"/>
+<text x="667.5" y="364.8858224447429" text-anchor="middle" font-size="13" font-family="Menlo, monospace">1.93e+06</text>
 <text x="667.5" y="442" text-anchor="middle" font-size="13" font-family="Menlo, monospace">pressure_poisson_256x256</text>
 </svg>

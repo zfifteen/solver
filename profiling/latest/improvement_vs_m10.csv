@@ -1,6 +1,6 @@
 metric,label,baseline_value,current_value,speedup,percent_improvement,units
-advection_256x256_throughput,Advection microbenchmark throughput,12700700.0,13285900.0,1.0460762005243804,4.607620052438044,cell_updates_per_second
-pressure_poisson_256x256_throughput,Pressure microbenchmark throughput,295109.0,1668890.0,5.655164701855925,465.5164701855925,unknown_updates_per_second
-taylor_green_128_cells_per_second,Taylor-Green end-to-end throughput,290798.3,1033452.3076923076,3.553845767641378,255.3845767641378,cells_per_second
-channel_couette_128_cells_per_second,Channel Couette end-to-end throughput,297890.9,374491.4285714286,1.2571428955078137,25.714289550781366,cells_per_second
-cavity_smoke_32_steps256_cells_per_second,Cavity smoke end-to-end throughput,284939.1,569878.2608695652,2.00000021362307,100.000021362307,cells_per_second
+advection_256x256_throughput,Advection microbenchmark throughput,12700700.0,14740200.0,1.1605817002212477,16.058170022124774,cell_updates_per_second
+pressure_poisson_256x256_throughput,Pressure microbenchmark throughput,295109.0,1929090.0,6.536872816484756,553.6872816484756,unknown_updates_per_second
+taylor_green_128_cells_per_second,Taylor-Green end-to-end throughput,290798.3,1101219.6721311475,3.78688483437196,278.688483437196,cells_per_second
+channel_couette_128_cells_per_second,Channel Couette end-to-end throughput,297890.9,451972.4137931035,1.5172414256128786,51.724142561287856,cells_per_second
+cavity_smoke_32_steps256_cells_per_second,Cavity smoke end-to-end throughput,284939.1,672164.1025641025,2.358974610940031,135.8974610940031,cells_per_second

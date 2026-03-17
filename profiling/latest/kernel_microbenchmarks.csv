@@ -1,3 +1,3 @@
 case,elapsed_seconds,average_seconds_per_repeat,logical_cells,throughput_label,throughput,lower_bound_bandwidth_gbps,average_iterations,average_relative_residual,multigrid_levels
-advection_256x256,1.18386,0.00493273,65536,cell_updates_per_second,13285900.0,0.851961,,,
-pressure_poisson_256x256,0.942463,0.0392693,65536,unknown_updates_per_second,1668890.0,,16.0,4.18503e-11,8
+advection_256x256,1.06706,0.00444608,65536,cell_updates_per_second,14740200.0,0.945215,,,
+pressure_poisson_256x256,0.81534,0.0339725,65536,unknown_updates_per_second,1929090.0,,16.0,4.18503e-11,8

@@ -13,4 +13,4 @@ Overall status: PASS
 
 - Spatial convergence is reported from the manufactured-solution operator study.
 - Temporal convergence is measured from the 2D Taylor-Green final-field self-convergence study on a fixed 128 x 128 grid.
-- Benchmark thresholds mirror the technical specification and benchmark harness contracts already in the repo, including the Milestone 12 3D Taylor-Green case.
+- Benchmark thresholds mirror the technical specification and benchmark harness contracts already in the repo.

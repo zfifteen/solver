@@ -1,6 +1,6 @@
 # Logical and Mathematical Code Review (Grok/opencode)
 
-**Repository:** solver
+**Repository:** orchard-flow (Orchard Flow)
 **Reviewer:** opencode (powered by grok-4.20)
 **Date:** 2026-03-17
 **Scope:** Logical errors, mathematical correctness in discretization, projection, operators, solvers, BCs, Metal path, validation. Focused exclusively on confirmed issues.

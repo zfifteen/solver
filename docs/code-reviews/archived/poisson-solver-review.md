@@ -1,6 +1,6 @@
 # Code Review: Poisson Solver Implementation
 
-**Repository**: zfifteen/solver  
+**Repository**: zfifteen/orchard-flow  
 **Branch**: main  
 **File**: `linsolve/poisson_solver.cpp`  
 **Reviewer**: Perplexity AI (Big D' request)  

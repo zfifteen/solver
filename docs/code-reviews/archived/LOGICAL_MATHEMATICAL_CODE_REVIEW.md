@@ -1,6 +1,6 @@
 # Logical and Mathematical Code Review
 
-**Repository:** `solver`  
+**Repository:** `orchard-flow` (`Orchard Flow`)  
 **Reviewer:** Codex  
 **Date:** 2026-03-17
 

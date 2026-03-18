@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(solver VERSION 0.1.0 LANGUAGES CXX OBJCXX)
+set(ORCHARD_FLOW_DISPLAY_NAME "Orchard Flow")
+
+project(orchard_flow VERSION 0.1.0 LANGUAGES CXX OBJCXX)
 
 include(CheckCXXCompilerFlag)
 include(CTest)
@@ -50,7 +52,7 @@ endif()
 add_library(solver_build_options INTERFACE)
 target_compile_features(solver_build_options INTERFACE cxx_std_20)
 target_compile_definitions(solver_build_options INTERFACE
-  SOLVER_PROJECT_NAME="${PROJECT_NAME}"
+  SOLVER_PROJECT_NAME="${ORCHARD_FLOW_DISPLAY_NAME}"
   SOLVER_PROJECT_VERSION="${PROJECT_VERSION}"
   SOLVER_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
   SOLVER_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
@@ -73,7 +75,7 @@ if(SOLVER_FAST_MATH_ENABLED)
   endif()
 endif()
 
-message(STATUS "Configuring solver ${PROJECT_VERSION}")
+message(STATUS "Configuring ${ORCHARD_FLOW_DISPLAY_NAME} ${PROJECT_VERSION}")
 message(STATUS "  Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Locked profile: ${SOLVER_BUILD_PROFILE}")

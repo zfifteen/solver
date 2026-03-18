@@ -1,8 +1,8 @@
-<img src="./assets/banner.png" alt="Apple-Native Solver Banner" width="100%" />
+<img src="./assets/banner.png" alt="Orchard Flow Banner" width="100%" />
 
-# Apple-Native Solver
+# Orchard Flow
 
-Apple-Native Solver is an incompressible CFD codebase built specifically for Apple Silicon. It is designed to be numerically serious, deterministic in its reference workflow, and transparent enough to validate, restart, benchmark, and profile without turning into a portability-first research grab bag.
+Orchard Flow is an incompressible CFD codebase built specifically for Apple Silicon. It is designed to be numerically serious, deterministic in its reference workflow, and transparent enough to validate, restart, benchmark, and profile without turning into a portability-first research grab bag.
 
 The project is intentionally narrow. Instead of chasing every platform and physics model at once, it focuses on a solver stack that fits Apple hardware, uses a clear numerical contract, and produces evidence you can inspect.
 

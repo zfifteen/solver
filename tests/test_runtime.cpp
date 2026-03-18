@@ -685,6 +685,11 @@ void test_runtime_platform_is_supported() {
   require(build_info.supported_runtime_platform, "expected Apple Silicon runtime");
 }
 
+void test_project_name_matches_orchard_flow() {
+  const solver::BuildInfo build_info = solver::get_build_info();
+  require(build_info.project_name == "Orchard Flow", "unexpected project name");
+}
+
 void test_banner_contains_profile() {
   const solver::BuildInfo build_info = solver::get_build_info();
   const std::string banner = solver::format_build_banner(build_info);
@@ -2327,9 +2332,10 @@ void test_lid_driven_cavity_reference_validation_gate() {
 
 int main() {
   try {
-    test_build_profile_is_locked();
-    test_runtime_platform_is_supported();
-    test_banner_contains_profile();
+  test_build_profile_is_locked();
+  test_runtime_platform_is_supported();
+  test_project_name_matches_orchard_flow();
+  test_banner_contains_profile();
     test_grid_coordinates();
     test_pressure_layout_indexing();
     test_ghost_cell_access_and_boundary_ranges();
